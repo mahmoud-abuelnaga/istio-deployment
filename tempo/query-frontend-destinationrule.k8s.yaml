@@ -1,0 +1,13 @@
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: tempo-query-frontend-plain-http
+  namespace: monitoring
+spec:
+  host: tempo-query-frontend.monitoring.svc.cluster.local
+  trafficPolicy:
+    portLevelSettings:
+      - port:
+          number: 3200
+        tls:
+          mode: DISABLE

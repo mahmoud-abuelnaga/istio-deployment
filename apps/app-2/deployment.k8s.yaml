@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-2
+  namespace: production
+  labels:
+    app.kubernetes.io/name: app-2
+    app.kubernetes.io/version: ${CONTAINER_IMAGE_TAG}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: app-2
+      app.kubernetes.io/version: ${CONTAINER_IMAGE_TAG}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: app-2
+        app.kubernetes.io/version: ${CONTAINER_IMAGE_TAG}
+      annotations:
+        traffic.sidecar.istio.io/excludeInboundPorts: "9464"
+        traffic.sidecar.istio.io/excludeOutboundPorts: "4318"
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: app
+          image: abuelnaga0/istio-app:${CONTAINER_IMAGE_TAG}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NODE_ENV
+              value: "production"
+            - name: PORT
+              value: "3000"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: OTEL_SERVICE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app.kubernetes.io/name']
+            - name: OTEL_SERVICE_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: OTEL_SERVICE_VERSION
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['app.kubernetes.io/version']
+            - name: OTEL_PROMETHEUS_PORT
+              value: "9464"
+            - name: SHUTDOWN_GRACE_PERIOD
+              value: "30"
+            - name: REPLAY_TARGET_URL
+              value: "http://app-1.production.svc.cluster.local/replay"
+            - name: OTEL_SEMCONV_STABILITY_OPT_IN
+              value: "http"
+            # OTLPTraceExporter() defaults to http://localhost:4318/v1/traces.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://tempo-distributor.monitoring.svc.cluster.local:4318"
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "http/protobuf"
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+            - name: http-metrics
+              containerPort: 9464
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 1
+            timeoutSeconds: 1
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 1
+            failureThreshold: 3
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]

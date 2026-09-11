@@ -1,0 +1,30 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: grafana-db
+  namespace: database
+spec:
+  instances: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  storage:
+    size: 10Gi
+    storageClass: local-path
+
+  podSecurityContext:
+    fsGroup: 26
+    runAsUser: 26
+    runAsGroup: 26
+    fsGroupChangePolicy: OnRootMismatch
+
+  bootstrap:
+    initdb:
+      database: grafana
+      owner: grafana
+      secret:
+        name: grafana-db-user

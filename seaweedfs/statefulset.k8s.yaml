@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: seaweedfs
+  namespace: database
+spec:
+  serviceName: seaweedfs-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      kubernetes.io/name: seaweedfs
+  template:
+    metadata:
+      labels:
+        kubernetes.io/name: seaweedfs
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: seaweedfs
+          image: chrislusf/seaweedfs:4.39
+          imagePullPolicy: IfNotPresent
+          args: ["mini"]
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: seaweedfs-credentials
+                  key: access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: seaweedfs-credentials
+                  key: secret-key
+            - name: S3_BUCKET
+              value: loki-chunks,loki-ruler,loki-admin,tempo-traces
+          ports:
+            - name: http-s3
+              containerPort: 8333
+            - name: http-master
+              containerPort: 9333
+            - name: http-filer
+              containerPort: 8888
+            - name: http-volume
+              containerPort: 9340
+            - name: http-admin
+              containerPort: 23646
+          readinessProbe:
+            tcpSocket:
+              port: http-s3
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /cluster/status
+              port: http-master
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 10Gi

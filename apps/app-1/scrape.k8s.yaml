@@ -1,0 +1,35 @@
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMServiceScrape
+metadata:
+  name: app-1
+  namespace: production
+  labels:
+    app.kubernetes.io/name: app-1
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: app-1
+  namespaceSelector:
+    matchNames:
+      - production
+  endpoints:
+    - port: http-metrics
+      path: /metrics
+      interval: 20s
+      relabelConfigs:
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_version]
+          targetLabel: version
+          regex: (.+)
+          replacement: $1
+      metricRelabelConfigs:
+        - regex: endpoint|instance|job|otel_scope_version|url_scheme
+          action: labeldrop
+
+    - port: http-envoy-prom
+      path: /stats/prometheus
+      interval: 20s
+      relabelConfigs:
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_version]
+          targetLabel: version
+          regex: (.+)
+          replacement: $1

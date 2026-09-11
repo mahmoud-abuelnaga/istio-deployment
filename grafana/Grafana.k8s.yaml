@@ -1,0 +1,105 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: grafana
+  namespace: monitoring
+  labels:
+    dashboards: grafana
+spec:
+  config:
+    log:
+      mode: console
+    security:
+      admin_user: admin
+      admin_password: admin
+
+    smtp:
+      enabled: "true"
+      host: $__env{host}
+      user: $__env{username}
+      password: $__env{password}
+      from_address: $__env{username}
+      from_name: Grafana Alerts
+      startTLS_policy: OpportunisticStartTLS
+
+    database:
+      type: postgres
+      host: grafana-db-rw.database.svc.cluster.local:5432
+      name: grafana
+      user: grafana
+      password: grafana
+      ssl_mode: disable
+
+    plugins:
+      preinstall_auto_update: "false"
+      preinstall_disabled: "false"
+      preinstall_sync: victoriametrics-metrics-datasource,grafana-lokiexplore-app
+
+    dataproxy:
+      timeout: "300"
+      keep_alive_seconds: "300"
+
+  deployment:
+    spec:
+      template:
+        metadata:
+          annotations:
+            # Grafana's Tempo client streams gRPC/HTTP2 at :3200. The sidecar
+            # would translate that to HTTP/1.1 and Tempo 404s. Bypass the mesh
+            # for that port only (query-frontend inbound 3200 is also excluded).
+            traffic.sidecar.istio.io/excludeOutboundPorts: "3200"
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 472
+            fsGroup: 472
+            fsGroupChangePolicy: OnRootMismatch
+          containers:
+            - name: grafana
+              envFrom:
+                - secretRef:
+                    name: alertmanager-smtp
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 200m
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+                privileged: false
+                readOnlyRootFilesystem: false
+                runAsNonRoot: true
+                runAsUser: 472
+                runAsGroup: 472
+
+              startupProbe:
+                httpGet:
+                  path: /api/health
+                  port: 3000
+                # Plugin install (loki explore + VictoriaMetrics) can take
+                # several minutes after a mesh-wide restart.
+                initialDelaySeconds: 60
+                periodSeconds: 10
+                failureThreshold: 30
+                successThreshold: 1
+
+              readinessProbe:
+                httpGet:
+                  path: /api/health
+                  port: 3000
+                periodSeconds: 10
+                failureThreshold: 3
+                successThreshold: 1
+
+              livenessProbe:
+                httpGet:
+                  path: /api/health
+                  port: 3000
+                periodSeconds: 10
+                failureThreshold: 3
+                successThreshold: 1

@@ -1,0 +1,90 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: tempo
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+
+  datasource:
+    name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo-query-frontend.monitoring.svc.cluster.local:3200
+    isDefault: false
+    editable: false
+    jsonData:
+      # traces -> logs. `${__tags}` expands to the mapped label selector
+      # (service_name="nodejs-app-1", namespace="production"); trace_id is
+      # structured metadata in Loki, so it is filtered with a label
+      # matcher rather than a `|=` line filter.
+      #
+      # Both mapped keys are resource attributes on the span. Loki calls
+      # the Kubernetes namespace `namespace` (Alloy sets it from
+      # __meta_kubernetes_namespace) while OTel calls it service.namespace.
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        tags:
+          - key: service.name
+            value: service_name
+          - key: service.namespace
+            value: namespace
+        filterByTraceID: false
+        filterBySpanID: false
+        customQuery: true
+        query: "{${__tags}} | trace_id = `${__span.traceId}`"
+
+      # traces -> metrics. `$__tags` expands to
+      # service="nodejs-app-1",namespace="production",span_name="GET /random-number".
+      # `service` is what the Tempo metrics-generator emits for service.name,
+      # and also what the VictoriaMetrics operator stamps on scraped targets,
+      # so both kinds of metric answer to the same selector. namespace comes
+      # from the service.namespace dimension configured under
+      # metricsGenerator.processor.span_metrics in Tempo/helm/values.yaml,
+      # renamed from the generator's `service_namespace` by the
+      # write_relabel_configs there; dropping that dimension would break these
+      # queries.
+      #
+      # `name` is not a span attribute but an intrinsic: Grafana appends it to
+      # the taggable set as {key: 'name', value: span.operationName} alongside
+      # spanId/traceId/duration, so it maps here like any attribute. It scopes
+      # every query below to the clicked span's operation rather than the whole
+      # service, which is what makes these useful from a span. The generator
+      # emits the matching label as span_name on both metrics.
+      #
+      # The service-wide view is still one edit away in Explore: delete the
+      # span_name matcher from the interpolated query. Per-query control is
+      # possible too - ${__span.name} works directly in a query string - but
+      # mapping it here keeps all three consistent.
+      tracesToMetrics:
+        datasourceUid: VictoriaMetrics
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        tags:
+          - key: service.name
+            value: service
+          - key: service.namespace
+            value: namespace
+          - key: name
+            value: span_name
+        queries:
+          - name: Request rate
+            query: sum(rate(traces_spanmetrics_calls_total{$__tags}[$__rate_interval]))
+          - name: Error rate
+            query: sum(rate(traces_spanmetrics_calls_total{$__tags,status_code="STATUS_CODE_ERROR"}[$__rate_interval]))
+          - name: Duration p95
+            query: histogram_quantile(0.95, sum by (le) (rate(traces_spanmetrics_latency_bucket{$__tags}[$__rate_interval])))
+      serviceMap:
+        datasourceUid: VictoriaMetrics
+      nodeGraph:
+        enabled: true
+      search:
+        hide: false
+      streamingEnabled:
+        search: true
+        metrics: true

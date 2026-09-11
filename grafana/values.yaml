@@ -1,0 +1,4 @@
+crds:
+  # Mutable CRDs are installed and upgraded with the chart. The chart default
+  # (`true`) installs them once via `crds/` and then requires kubectl apply.
+  immutable: false

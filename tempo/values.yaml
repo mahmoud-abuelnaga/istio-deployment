@@ -1,0 +1,246 @@
+# tempo-distributed 3.0.6 (Tempo 3.0.2)
+# Development-sized, single-partition deployment for the local Kind POC.
+
+fullnameOverride: tempo
+
+reportingEnabled: false
+multitenancyEnabled: false
+streamOverHTTPEnabled: true
+
+global:
+  storageClass: local-path
+
+server:
+  http_server_read_timeout: 300s
+  http_server_write_timeout: 300s
+
+defaults:
+  # Keep S3 credentials out of the generated Tempo ConfigMap. Tempo expands
+  # ${...} references after the Secret has been injected into each component.
+  extraArgs:
+    - -config.expand-env=true
+  extraEnvFrom:
+    - secretRef:
+        name: tempo-s3
+  # Memberlist gossip on 7946 is delayed/reset by the sidecar, which produces
+  # "Refuting a suspect message" warnings. Keep gossip off-mesh.
+  podAnnotations:
+    traffic.sidecar.istio.io/excludeInboundPorts: "7946"
+    traffic.sidecar.istio.io/excludeOutboundPorts: "7946"
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 256Mi
+
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: ${S3_BUCKET}
+      endpoint: ${S3_ENDPOINT}
+      access_key: ${S3_ACCESS_KEY}
+      secret_key: ${S3_SECRET_KEY}
+      insecure: true
+      forcepathstyle: true
+
+# Tempo 3 microservices mode writes every span to Kafka. The partition count
+# must match the block-builder and live-store replica counts below.
+ingest:
+  kafka:
+    address: tempo-kafka.monitoring.svc.cluster.local:9093
+    topic: tempo-traces
+    auto_create_topic_enabled: true
+    auto_create_topic_default_partitions: 1
+
+traces:
+  otlp:
+    grpc:
+      enabled: true
+    http:
+      enabled: true
+
+distributor:
+  replicas: 1
+
+blockBuilder:
+  enabled: true
+  replicas: 1
+
+liveStore:
+  enabled: true
+  replicas: 1
+
+backendScheduler:
+  enabled: true
+  config:
+    provider:
+      compaction:
+        compaction:
+          # Preserve the TempoStack 336h (14-day) trace retention.
+          block_retention: 336h
+
+backendWorker:
+  replicas: 1
+
+querier:
+  replicas: 1
+  config:
+    search:
+      query_timeout: 280s
+
+queryFrontend:
+  replicas: 1
+  # Grafana streams gRPC over HTTP/2 to :3200. Sidecar inbound would force
+  # HTTP/1.1 onto Tempo and streaming 404s. Scrapes of :3200 use a DestinationRule
+  # with TLS disabled (tempo/query-frontend-destinationrule.k8s.yaml).
+  podAnnotations:
+    traffic.sidecar.istio.io/excludeInboundPorts: "3200,7946"
+    traffic.sidecar.istio.io/excludeOutboundPorts: "7946"
+  config:
+    metrics:
+      query_backend_after: 15m
+
+metricsGenerator:
+  enabled: true
+  kind: StatefulSet
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: local-path
+  config:
+    registry:
+      collection_interval: 15s
+      external_labels:
+        source: tempo
+      stale_duration: 15m
+    processor:
+      service_graphs:
+        enable_client_server_prefix: true
+        dimensions:
+          - service.namespace
+          - service.version
+        histogram_buckets:
+          - 0.1
+          - 0.2
+          - 0.4
+          - 0.8
+          - 1.6
+          - 3.2
+          - 6.4
+          - 12.8
+        max_items: 10000
+        wait: 10s
+        workers: 2
+      span_metrics:
+        dimensions:
+          - service.namespace
+          - service.version
+        histogram_buckets:
+          - 0.002
+          - 0.004
+          - 0.008
+          - 0.016
+          - 0.032
+          - 0.064
+          - 0.128
+          - 0.256
+          - 0.512
+          - 1.02
+          - 2.05
+          - 4.1
+    storage:
+      path: /var/tempo/wal
+      wal: {}
+      remote_write_add_org_id_header: false
+      remote_write_flush_deadline: 1m
+      remote_write:
+        - url: http://vmsingle-vm-victoria-metrics-k8s-stack.monitoring.svc.cluster.local:8428/api/v1/write
+          send_exemplars: true
+          # `service_namespace` is derived from the service.namespace dimension
+          # above and is the one label in this stack that follows no
+          # convention: scraped targets get `namespace` from the
+          # VictoriaMetrics operator and Alloy sets `namespace` on Loki
+          # streams. Rewrite it so every signal names the Kubernetes namespace
+          # the same way.
+          #
+          # `service` is deliberately left alone: Tempo hardcodes it for
+          # service.name, which matches both the Prometheus convention and the
+          # label the operator puts on scraped targets.
+          #
+          # Relabel regexes are fully anchored, so this matches `service_namespace`
+          # exactly and leaves the service-graph dimensions
+          # (`client_service_namespace`/`server_service_namespace`, prefixed by
+          # enable_client_server_prefix) untouched.
+          write_relabel_configs:
+            - source_labels: [service_namespace]
+              target_label: namespace
+              regex: (.+)
+              action: replace
+            - regex: service_namespace
+              action: labeldrop
+    metrics_ingestion_time_range_slack: 30s
+
+overrides:
+  defaults:
+    metrics_generator:
+      processors:
+        - service-graphs
+        - span-metrics
+
+memcached:
+  enabled: true
+  replicas: 1
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 50m
+      memory: 64Mi
+
+gateway:
+  enabled: false
+
+# These replace TempoStack spec.observability.metrics. VictoriaMetrics
+# Operator converts both Prometheus Operator resource types automatically.
+metaMonitoring:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+
+prometheusRule:
+  enabled: true
+  # namespace: monitoring
+  groups:
+    - name: tempo-health
+      rules:
+        - alert: TempoComponentDown
+          expr: up{job=~".*/(backend-scheduler|backend-worker|block-builder|distributor|live-store|metrics-generator|querier|query-frontend)"} == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: Tempo component is unavailable
+            description: "{{ $labels.job }} has been unavailable for more than five minutes."
+        - alert: TempoLiveStoreNotReady
+          # Every Tempo component exports this gauge; only live-store pods set
+          # it to 1. Filter by job or the alert fires for all other pods.
+          expr: tempo_live_store_ready{job=~".*/live-store"} < 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Tempo live-store {{ $labels.pod }} is not ready"
+            description: "Tempo live-store {{ $labels.pod }} has been unready for more than five minutes."
+        - alert: TempoLiveStoreDroppingRecords
+          expr: rate(tempo_live_store_records_dropped_total[5m]) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Tempo live-store {{ $labels.pod }} is dropping trace records"
+            description: "Tempo live-store {{ $labels.pod }} has dropped Kafka records during the last five minutes."

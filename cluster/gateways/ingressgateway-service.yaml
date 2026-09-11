@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingressgateway
+  namespace: istio-gateway
+spec:
+  type: LoadBalancer
+  selector:
+    app.kubernetes.io/name: ingressgateway
+  ports:
+    - name: http2
+      port: 80
+      targetPort: 80
+    - name: https
+      port: 443
+      targetPort: 443
+    - name: status-port
+      port: 15021
+      targetPort: 15021

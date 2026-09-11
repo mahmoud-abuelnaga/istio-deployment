@@ -1,0 +1,34 @@
+{
+    "name": "nodejs-app-codebase",
+    "version": "1.0.0",
+    "description": "",
+    "main": "index.js",
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "start": "node --enable-source-maps --import ./dist/hooks/otel-hook.js --import ./dist/instrumentation.js ./dist/index.js",
+        "dev": "tsx --import ./src/hooks/otel-hook.ts --import ./src/instrumentation.ts ./src/index.ts"
+    },
+    "type": "module",
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+        "@opentelemetry/api": "^1.9.1",
+        "@opentelemetry/auto-instrumentations-node": "^0.78.0",
+        "@opentelemetry/exporter-trace-otlp-proto": "^0.220.0",
+        "@opentelemetry/instrumentation": "^0.220.0",
+        "@opentelemetry/resources": "^2.9.0",
+        "@opentelemetry/sdk-node": "^0.220.0",
+        "axios": "^1.19.0",
+        "express": "^5.2.1",
+        "pino": "^10.3.1",
+        "pino-http": "^11.0.0",
+        "prom-client": "^15.1.3"
+    },
+    "devDependencies": {
+        "@types/express": "^5.0.6",
+        "@types/node": "^26.1.1",
+        "tsx": "^4.23.0",
+        "typescript": "^7.0.2"
+    }
+}

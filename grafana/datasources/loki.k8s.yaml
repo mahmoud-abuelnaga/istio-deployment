@@ -1,0 +1,76 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: loki
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+
+  datasource:
+    name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki-gateway.monitoring.svc.cluster.local:80
+    isDefault: false
+    editable: false
+    jsonData:
+      # Alloy writes trace_id/span_id as structured metadata (see
+      # GrafanaAlloy/values.logs.yaml), so the derived fields match on
+      # `label` instead of re-parsing the log line with a regex.
+      derivedFields:
+        # logs -> traces. `${__value.raw}` is the extracted trace_id,
+        # which the Tempo data source resolves as a trace lookup. A
+        # trace ID is globally unique, so this needs no extra scoping.
+        - name: TraceID
+          matcherType: label
+          matcherRegex: trace_id
+          datasourceUid: tempo
+          url: "${__value.raw}"
+          urlDisplayLabel: View trace
+
+        # logs -> metrics. When a derived field targets a
+        # Prometheus-type data source, `url` is used as the PromQL
+        # expression, so the log's service_name seeds a query against
+        # the Tempo-generated span metrics.
+        #
+        # logs -> metrics. Deliberately an *external* link (no
+        # datasourceUid) even though the target is a Grafana data
+        # source. Setting datasourceUid makes Grafana build an internal
+        # link, and the query object it emits for a derived field is
+        # hardcoded to `{query: <url>, queryType: ...}`:
+        #
+        #   getDerivedFields.ts:
+        #     query: { query: derivedFieldConfig.url,
+        #              queryType: queryType(dsSettings?.type) }
+        #
+        # mapInternalLinkToExplore forwards that object to the target
+        # without any type-specific conversion, and `queryType` is only
+        # populated for Tempo and X-Ray. Prometheus reads `expr`, never
+        # `query`, so an internal link opens Explore with an empty query
+        # editor and "No data". Derived fields only ever supported
+        # tracing targets; the TraceID link above works precisely
+        # because Tempo's query model *is* {query, queryType}.
+        #
+        # Hand-writing the Explore URL sidesteps that: it is the same
+        # payload Grafana generates, with `expr` in place of `query`.
+        # ${__from}/${__to} carry the source pane's time range across.
+        #
+        # The label names differ by design on each side: Loki indexes
+        # service_name (it would synthesise that label anyway via
+        # discover_service_name) while metrics use `service`, the
+        # Prometheus convention that both Tempo's generator and the
+        # VictoriaMetrics operator emit.
+        #
+        # This one cannot also filter on namespace: a derived field
+        # exposes only ${__value.raw}, the single value its matcher
+        # extracted, with no way to reference a second label. Span
+        # metric `service` values are unique across namespaces here, so
+        # the service-only scope resolves to one series set in practice.
+        - name: ServiceMetrics
+          matcherType: label
+          matcherRegex: service_name
+          url: '/explore?left={"range":{"from":"${__from}","to":"${__to}"},"datasource":"VictoriaMetrics","queries":[{"refId":"A","datasource":{"type":"prometheus","uid":"VictoriaMetrics"},"expr":"sum by (span_name, status_code) (rate(traces_spanmetrics_calls_total{service=\"${__value.raw}\"}[$__rate_interval]))"}]}'
+          urlDisplayLabel: Service span metrics

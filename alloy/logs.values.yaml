@@ -1,0 +1,282 @@
+global:
+  podSecurityContext:
+    fsGroup: 473
+    supplementalGroups:
+      - 0
+
+crds:
+  create: false
+
+alloy:
+  # -- Enables sending Grafana Labs anonymous usage stats to help improve Grafana
+  # Alloy.
+  enableReporting: false
+  storagePath: /var/lib/alloy
+
+  # extraPorts:
+  #     - name: otlp-grpc
+  #       port: 4317
+  #       targetPort: 4317
+  #       protocol: TCP
+
+  #     - name: otlp-http
+  #       port: 4318
+  #       targetPort: 4318
+  #       protocol: TCP
+
+  mounts:
+    # -- Mount /var/log from the host into the container for log collection.
+    varlog: true
+    # -- Mount /var/lib/docker/containers from the host into the container for log
+    # collection.
+    dockercontainers: false
+    extra:
+      - name: alloy-logs
+        mountPath: /var/lib/alloy
+
+  # -- Security context to apply to the Grafana Alloy container.
+  securityContext:
+    runAsUser: 473
+    runAsGroup: 473
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop:
+        - ALL
+
+  # Graph evaluation takes ~30s; give the readiness probe time to succeed
+  # on later retries instead of failing the 1s default on the first tries.
+  initialDelaySeconds: 30
+  timeoutSeconds: 5
+
+  # -- Resource requests and limits to apply to the Grafana Alloy container.
+  resources:
+    requests:
+      cpu: 25m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+  # -- Set lifecycle hooks for the Grafana Alloy container.
+  lifecycle:
+    preStop:
+      exec:
+        command:
+          - /bin/sleep
+          - "10"
+
+  configMap:
+    content: |
+      logging {
+        level = "info"
+        format = "json"
+      }
+
+      discovery.kubernetes "pods" {
+        role = "pod"
+
+        // Each DaemonSet instance handles only Pods on its own node.
+        // Without this, every Alloy Pod could discover every cluster Pod.
+        selectors {
+            role  = "pod"
+            field = "spec.nodeName=" + coalesce(
+                sys.env("HOSTNAME"),
+                constants.hostname,
+            )
+        }
+      }
+
+      discovery.relabel "pod_logs" {
+        targets = discovery.kubernetes.pods.targets
+
+        rule {
+            source_labels = ["__meta_kubernetes_namespace"]
+            target_label  = "namespace"
+        }
+
+        rule {
+            source_labels = ["__meta_kubernetes_pod_name"]
+            target_label  = "pod"
+        }
+
+        rule {
+            source_labels = ["__meta_kubernetes_pod_container_name"]
+            target_label  = "container"
+        }
+
+        rule {
+            source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+            regex         = "(.+)"
+            target_label  = "service_name"
+        }
+
+        // Falls back to the container name when the app label is absent.
+        // The rule only fires if service_name is still empty: the
+        // concatenated string starts with the separator only in that case.
+        rule {
+            source_labels = ["service_name", "container"]
+            separator     = ";"
+            regex         = "^;(.*)$"
+            target_label  = "service_name"
+            replacement   = "$1"
+        }
+
+        // Pods without the label produce an empty value, which Loki drops.
+        // Named `version`, not `service_version`, to match the label span
+        // metrics and scraped app metrics already use for the same value.
+        rule {
+            source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_version"]
+            target_label  = "version"
+        }
+
+        rule {
+            source_labels = [
+              "__meta_kubernetes_pod_uid",
+              "__meta_kubernetes_pod_container_name",
+            ]
+            separator    = "/"
+            replacement  = "/var/log/pods/*$1/*.log"
+            target_label = "__path__"
+        }
+      }
+
+      local.file_match "pod_logs" {
+          path_targets = discovery.relabel.pod_logs.output
+      }
+
+      loki.source.file "pod_logs" {
+          targets    = local.file_match.pod_logs.targets
+          forward_to = [loki.process.pod_logs.receiver]
+      }
+
+      loki.process "pod_logs" {
+          // Removes the Kubernetes CRI timestamp/stream wrapper.
+          stage.cri {}
+
+          // Keep Kubernetes context queryable as structured metadata
+          // instead of indexed labels (empty value = copy the label
+          // with the same name).
+          stage.structured_metadata {
+              values = {
+                  pod       = "",
+                  // container = "",
+                  filename  = "",
+                  stream    = "",
+              }
+          }
+
+          // Extract trace context only from our apps (production namespace),
+          // which all emit JSON logs with OTel trace_id/span_id fields.
+          // Monitoring/system components keep their mixed formats untouched.
+          stage.match {
+              selector = "{namespace=\"production\"}"
+
+              // stage.json fails silently on non-JSON lines, so detect the
+              // format up front and stamp it as metadata for auditing.
+              // stage.regex {
+              //    expression = "^\\s*(?P<json_line>\\{)"
+              // }
+
+              // stage.template {
+              //     source = "log_format"
+              //     // Backtick-escaped so Helm's tpl renders it verbatim for Alloy.
+              //     template = "{{ `{{ if .json_line }}json{{ else }}not_json{{ end }}` }}"
+              // }
+
+              stage.json {
+                  expressions = {
+                      trace_id = "trace_id",
+                      span_id  = "span_id",
+                  }
+              }
+
+              stage.structured_metadata {
+                  values = {
+                      trace_id   = "",
+                      span_id    = "",
+                      // log_format = "",
+                  }
+              }
+          }
+
+          forward_to = [loki.relabel.pod_logs.receiver]
+      }
+
+      // Only `service_name`, `namespace` and `version` survive as indexed
+      // labels; everything else was attached as structured metadata above.
+      loki.relabel "pod_logs" {
+          forward_to = [loki.write.default.receiver]
+
+          rule {
+              action = "labelkeep"
+              regex  = "(service_name|namespace|version|container)"
+          }
+      }
+
+      loki.write "default" {
+        endpoint {
+          url = "http://loki-gateway.monitoring.svc/loki/api/v1/push"
+        }
+      }
+
+rbac:
+  # -- The rules to create for the ClusterRole or Role objects.
+  rules:
+    - apiGroups: [""]
+      resources: ["pods"]
+      verbs: ["get", "list", "watch"]
+
+  clusterRules:
+    - apiGroups: [""]
+      resources: ["pods"]
+      verbs: ["watch"]
+
+# Options for the extra controller used for config reloading.
+configReloader:
+  # -- Resource requests and limits to apply to the config reloader container.
+  resources:
+    requests:
+      cpu: "5m"
+      memory: "16Mi"
+    limits:
+      cpu: "20m"
+      memory: "32Mi"
+  # -- Security context to apply to the Grafana configReloader container.
+  securityContext:
+    runAsUser: 65534
+    runAsGroup: 65534
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    seccompProfile:
+      type: RuntimeDefault
+    capabilities:
+      drop:
+        - ALL
+
+controller:
+  # -- Type of controller to use for deploying Grafana Alloy in the cluster.
+  # Must be one of 'daemonset', 'deployment', or 'statefulset'.
+  type: "daemonset"
+
+  # -- Termination grace period in seconds for the Grafana Alloy pods.
+  # The default value used by Kubernetes if unspecifed is 30 seconds.
+  terminationGracePeriodSeconds: 60
+
+  # -- Whether to enable automatic deletion of stale PVCs due to a scale down operation, when controller.type is 'statefulset'.
+  enableStatefulSetAutoDeletePVC: false
+
+  volumes:
+    extra:
+      # Writable storagePath for WAL/positions. hostPath Directory fails on
+      # Kind (the path does not exist) and hostPath ignores fsGroup, so a
+      # non-root Alloy container could not write even after DirectoryOrCreate.
+      - name: alloy-logs
+        emptyDir: {}
+
+serviceMonitor:
+  enabled: true

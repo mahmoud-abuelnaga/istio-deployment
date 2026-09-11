@@ -1,0 +1,182 @@
+victoria-metrics-operator:
+  operator:
+    enable_converter_ownership: true
+
+defaultDashboards:
+  grafanaOperator:
+    enabled: true
+
+defaultDatasources:
+  grafanaOperator:
+    enabled: true
+
+grafana:
+  enabled: false
+  # Create datasource configmap even if grafana deployment has been disabled
+  forceDeployDatasource: true
+
+vmsingle:
+  spec:
+    retentionPeriod: "10d"
+    extraArgs:
+      search.cacheTimestampOffset: 10m
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        cpu: 250m
+        memory: 512Mi
+    storage:
+      storageClassName: "standard"
+      resources:
+        requests:
+          storage: 10Gi
+
+vmalert:
+  spec:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    # How often every rule group is evaluated unless it sets its own `interval`.
+    # The app rules in VictoriaMetrics/kubernetes/nodejs-app-alerts.yaml are built
+    # on rate(...[5m]) windows over a 20s scrape, so a 5m window holds ~15 samples
+    # and evaluating faster than this just re-reads samples already seen. Detection
+    # latency is set by each rule's `for:` clause (2-15m here), not by this value.
+    evaluationInterval: 30s
+
+vmagent:
+  spec:
+    podMetadata:
+      annotations:
+        traffic.sidecar.istio.io/excludeOutboundPorts: "15090"
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    # The operator injects `prometheus: <namespace>/<name>` here by default,
+    # which lands on every scraped series. It identifies the scraping agent,
+    # which is meaningless in a single-agent cluster. External labels are
+    # applied after metric_relabel_configs, so a labeldrop in a VMServiceScrape
+    # cannot remove it - it has to be overridden at the source. VictoriaMetrics
+    # discards labels with an empty value on ingestion.
+    externalLabels:
+      prometheus: ""
+
+alertmanager:
+  spec:
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 50m
+        memory: 64Mi
+    # Secrets mounted at /etc/vm/secrets/<name> (e.g. SMTP credentials)
+    secrets:
+      - alertmanager-smtp
+  config:
+    global:
+      smtp_smarthost: smtp.gmail.com:587
+      smtp_from: mahmoudabuelnaga27@gmail.com
+      smtp_auth_username: mahmoudabuelnaga27@gmail.com
+      # Password is read from the alertmanager-smtp k8s Secret,
+      # mounted by spec.secrets at /etc/vm/secrets/alertmanager-smtp/password
+      smtp_auth_password_file: /etc/vm/secrets/alertmanager-smtp/password
+      smtp_require_tls: true
+
+    route:
+      receiver: "gmail"
+      group_by: ["alertname", "namespace"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+
+      routes:
+        # Alerting plumbing, not findings — neither should ever reach a human.
+        # InfoInhibitor exists purely as an inhibition source (see inhibit_rules
+        # below); Watchdog only proves the pipeline is alive. Both are dropped.
+        # Must stay first: routes match in order and these have no `continue`.
+        - matchers:
+            - alertname=~"InfoInhibitor|Watchdog"
+          receiver: "blackhole"
+
+    inhibit_rules:
+      # A critical alert silences the warning/info copies of the same alertname.
+      - target_matchers:
+          - severity=~"warning|info"
+        source_matchers:
+          - severity=critical
+        equal:
+          - cluster
+          - namespace
+          - alertname
+      # Likewise a warning silences the info copy of the same alertname.
+      - target_matchers:
+          - severity=info
+        source_matchers:
+          - severity=warning
+        equal:
+          - cluster
+          - namespace
+          - alertname
+      # While InfoInhibitor fires for a namespace (meaning that namespace has
+      # info alerts and nothing worse), mute its info alerts. It stops firing
+      # the moment a warning/critical appears there, which un-mutes them
+      # exactly when they become useful context.
+      - target_matchers:
+          - severity=info
+        source_matchers:
+          - alertname=InfoInhibitor
+        equal:
+          - cluster
+          - namespace
+
+    receivers:
+      - name: gmail
+        email_configs:
+          - to: mahmoudabuelnaga27@gmail.com
+            send_resolved: true
+
+      # Intentionally has no configs: anything routed here is discarded.
+      - name: blackhole
+
+kubeControllerManager:
+  vmScrape:
+    spec:
+      endpoints:
+        - bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+          port: http-metrics
+          scheme: https
+          tlsConfig:
+            caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            serverName: kubernetes
+            insecureSkipVerify: true
+
+kubeEtcd:
+  service:
+    port: 2381
+    targetPort: 2381
+  vmScrape:
+    spec:
+      endpoints:
+        - port: http-metrics
+          scheme: http
+
+kubeScheduler:
+  vmScrape:
+    spec:
+      endpoints:
+        - bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+          port: http-metrics
+          scheme: https
+          tlsConfig:
+            caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+            insecureSkipVerify: true
