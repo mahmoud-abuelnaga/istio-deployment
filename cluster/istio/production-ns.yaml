@@ -1,0 +1,10 @@
+apiVersion: telemetry.istio.io/v1
+kind: Telemetry
+metadata:
+  name: production
+  namespace: production # root namespace
+spec:
+  tracing:
+    - providers:
+        - name: tempo
+      randomSamplingPercentage: 100.0

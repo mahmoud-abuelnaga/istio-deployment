@@ -1,0 +1,56 @@
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  name: default
+  namespace: istio-system
+spec:
+  profile: minimal
+  meshConfig:
+    enableTracing: true
+    extensionProviders:
+      - name: tempo
+        opentelemetry:
+          port: 4317
+          service: tempo-distributor.monitoring.svc.cluster.local
+
+    defaultConfig:
+      tracing: {}
+      proxyMetadata:
+        # Kind nodes are docker-stop'd overnight. Default 24h workload certs
+        # expire while the cluster is frozen and SDS never rotates. Max is 90d.
+        SECRET_TTL: "2160h"
+  components:
+    pilot:
+      k8s:
+        # Chart default is 500m/2Gi — production-sized, will not leave room
+        # for the observability stack on a ~13Gi Kind node.
+        resources:
+          requests:
+            cpu: 50m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+  values:
+    global:
+      proxy:
+        # Chart default is 100m/128Mi request and 2/1Gi limit per sidecar.
+        # Monitoring+database alone inject ~35 proxies.
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+    pilot:
+      autoscaleEnabled: false
+      env:
+        DEFAULT_WORKLOAD_CERT_TTL: "2160h"
+        MAX_WORKLOAD_CERT_TTL: "2160h"
+  # meshConfig:
+  #   extensionProviders:
+  #     - name: otel-tracing
+  #       openTelemetry:
+  #         service: opentelemetry-collector.otel.svc.cluster.local
+  #         port: 4317
