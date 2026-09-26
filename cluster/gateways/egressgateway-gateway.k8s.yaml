@@ -1,0 +1,34 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: egressgateway
+  namespace: istio-gateway
+spec:
+  gatewayClassName: istio
+
+  addresses:
+    - type: Hostname
+      value: egressgateway.istio-gateway.svc.cluster.local
+
+  listeners:
+    - name: http-google
+      hostname: google.com
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
+        kinds:
+          - kind: HTTPRoute
+
+    - name: tls-google
+      hostname: google.com
+      port: 443
+      protocol: TLS
+      tls:
+        mode: Passthrough
+      allowedRoutes:
+        namespaces:
+          from: Same
+        kinds:
+          - kind: TLSRoute

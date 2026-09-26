@@ -108,7 +108,7 @@ ingester:
         accessModes:
           - ReadWriteOnce
         size: 10Gi
-        storageClass: local-path
+        storageClass: csi-hostpath-sc
   zoneAwareReplication:
     enabled: false
 
@@ -133,20 +133,20 @@ indexGateway:
   affinity: {}
   persistence:
     enabled: true
-    storageClass: local-path
+    storageClass: csi-hostpath-sc
 
 compactor:
   replicas: 1
   affinity: {}
   persistence:
     enabled: true
-    storageClass: local-path
+    storageClass: csi-hostpath-sc
     claims:
       - name: data
         accessModes:
           - ReadWriteOnce
         size: 10Gi
-        storageClass: local-path
+        storageClass: csi-hostpath-sc
 
 bloomGateway:
   enabled: false
@@ -165,20 +165,20 @@ patternIngester:
   replicas: 1
   affinity: {}
   persistence:
-    storageClass: local-path
+    storageClass: csi-hostpath-sc
     claims:
       - name: data
         accessModes:
           - ReadWriteOnce
         size: 10Gi
-        storageClass: local-path
+        storageClass: csi-hostpath-sc
 
 ruler:
   replicas: 1
   affinity: {}
   persistence:
     enabled: true
-    storageClass: local-path
+    storageClass: csi-hostpath-sc
 
 # Kind worker allocatable is ~13Gi. Chart defaults request 1024Mi for
 # results-cache and 8192Mi for chunks-cache (plus an optional L2), which
@@ -188,14 +188,14 @@ resultsCache:
   allocatedCPU: 25m
   persistence:
     enabled: true
-    storageClass: local-path
+    storageClass: csi-hostpath-sc
 
 chunksCache:
   allocatedMemory: 128
   allocatedCPU: 25m
   persistence:
     enabled: true
-    storageClass: local-path
+    storageClass: csi-hostpath-sc
 
 monitoring:
   namespace: monitoring

@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: app-1
+  name: app-1-${CONTAINER_IMAGE_TAG}
   namespace: production
   labels:
     app.kubernetes.io/name: app-1

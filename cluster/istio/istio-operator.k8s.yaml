@@ -48,6 +48,7 @@ spec:
       env:
         DEFAULT_WORKLOAD_CERT_TTL: "2160h"
         MAX_WORKLOAD_CERT_TTL: "2160h"
+        PILOT_ENABLE_ALPHA_GATEWAY_API: "true"
   # meshConfig:
   #   extensionProviders:
   #     - name: otel-tracing

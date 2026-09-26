@@ -1,0 +1,36 @@
+cr:
+  create: true
+  namespace: istio-system
+  spec:
+    auth:
+      strategy: anonymous
+    deployment:
+      # Tempo query-frontend inbound 3200 is excluded from the sidecar
+      # (HTTP/2/mTLS breaks the HTTP API). Grafana already bypasses 3200
+      # the same way; Kiali health/version checks must too.
+      pod_annotations:
+        traffic.sidecar.istio.io/excludeOutboundPorts: "3200"
+    external_services:
+      prometheus:
+        url: http://vmsingle-vm-victoria-metrics-k8s-stack.monitoring.svc.cluster.local:8428
+      grafana:
+        enabled: true
+        internal_url: http://grafana-service.monitoring.svc.cluster.local:3000
+        external_url: http://grafana.example.com
+        health_check_url: http://grafana-service.monitoring.svc.cluster.local:3000/api/health
+        auth:
+          type: basic
+          username: admin
+          password: admin
+      tracing:
+        enabled: true
+        provider: tempo
+        use_grpc: false
+        # Default health path is /status/services (Jaeger). Tempo serves
+        # /status on the query-frontend HTTP API instead.
+        internal_url: http://tempo-query-frontend.monitoring.svc.cluster.local:3200
+        health_check_url: http://tempo-query-frontend.monitoring.svc.cluster.local:3200/status
+        external_url: http://grafana.example.com
+        query_timeout: 30
+        tempo_config:
+          datasource_uid: tempo

@@ -8,7 +8,7 @@ multitenancyEnabled: false
 streamOverHTTPEnabled: true
 
 global:
-  storageClass: local-path
+  storageClass: csi-hostpath-sc
 
 server:
   http_server_read_timeout: 300s
@@ -110,7 +110,7 @@ metricsGenerator:
   persistence:
     enabled: true
     size: 10Gi
-    storageClass: local-path
+    storageClass: csi-hostpath-sc
   config:
     registry:
       collection_interval: 15s

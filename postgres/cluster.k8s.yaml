@@ -14,7 +14,7 @@ spec:
       memory: 256Mi
   storage:
     size: 10Gi
-    storageClass: local-path
+    storageClass: csi-hostpath-sc
 
   podSecurityContext:
     fsGroup: 26

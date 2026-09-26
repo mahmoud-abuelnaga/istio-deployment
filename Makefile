@@ -12,6 +12,10 @@ ISTIO_REVISION ?= $(subst .,-,$(ISTIO_VERSION))
 ISTIO_REVISION_TAG ?= default
 ISTIO_PROTECTED_NAMESPACES := kube-system kube-public kube-node-lease istio-system local-path-storage istio-gateway cnpg-system
 
+# kiali
+KIALI_RELEASE_NAME ?= kiali-operator
+KIAlI_CHART_VERSION ?= 2.31.0
+
 # kind
 CLUSTER_NAME ?= "istio-cluster"
 KUBECTL_CONTEXT := kind-$(CLUSTER_NAME)
@@ -24,6 +28,7 @@ CALICO_MANIFEST_URL := https://raw.githubusercontent.com/projectcalico/calico/$(
 # namespaces
 MONITORING_NAMESPACE ?= monitoring
 DATABASE_NAMESPACE ?= database
+KIALI_NAMESPACE ?= kiali-operator
 
 # app
 CONTAINER_IMAGE_REPO_NAMESPACE := abuelnaga0
@@ -69,7 +74,7 @@ ALLOY_LOGS_RELEASE_NAME ?= alloy-logs
 # cluster targets
 .PHONY: install-gateway-crds
 install-gateway-crds:
-	kubectl kustomize "github.com/kubernetes-sigs/gateway-api/config/crd?ref=v1.4.0" | kubectl --context $(KUBECTL_CONTEXT) apply -f -
+	kubectl kustomize "github.com/kubernetes-sigs/gateway-api/config/crd/experimental?ref=v1.4.1" | kubectl --context $(KUBECTL_CONTEXT) apply --server-side -f -
 
 .PHONY: install-calico
 install-calico:
@@ -155,13 +160,13 @@ start-cluster:
 	fi
 
 	if [ "$$first_deploy" != "true" ]; then
-		$(MAKE) refresh-istio-workload-certs
+		# $(MAKE) refresh-istio-workload-certs
 		exit 0;
 	fi
 
 	$(MAKE) deploy-namespaces
 	$(MAKE) install-calico
-	$(MAKE) install-local-path-provisioner
+	# $(MAKE) install-local-path-provisioner
 	$(MAKE) install-csi-hostpath-driver
 	$(MAKE) set-default-storage-class
 	$(MAKE) install-gateway-crds
@@ -191,6 +196,8 @@ start-cluster:
 	$(MAKE) deploy-grafana-datasources
 	$(MAKE) correlate-metrics-to-logs
 	$(MAKE) correlate-metrics-to-traces
+	$(MAKE) install-kiali-helm-repo
+	$(MAKE) deploy-kiali
 	$(MAKE) deploy-gateway
 
 .PHONY: stop-cluster
@@ -540,13 +547,13 @@ deploy-istio:
 
 	$$ISTIOCTL install -y \
 	  --set revision=$(ISTIO_REVISION) \
-	  -f $(MAKEFILE_DIR)cluster/istio/istio-operator.yaml;
+	  -f $(MAKEFILE_DIR)cluster/istio/istio-operator.k8s.yaml;
 
 	kubectl --context $(KUBECTL_CONTEXT) \
-	  apply -f $(MAKEFILE_DIR)cluster/istio/default.yaml
+	  apply -f $(MAKEFILE_DIR)cluster/istio/default.k8s.yaml
 
 	kubectl --context $(KUBECTL_CONTEXT) \
-	  apply -f $(MAKEFILE_DIR)cluster/istio/production-ns.yaml
+	  apply -f $(MAKEFILE_DIR)cluster/istio/production-ns.k8s.yaml
 
 .PHONY: refresh-istio-workload-certs
 .ONESHELL:
@@ -636,15 +643,77 @@ deploy-namespaces:
 .PHONY: deploy-gateway
 .ONESHELL:
 deploy-gateway:
-	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/ingressgateway-service.yaml
-	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/ingressgateway-gateway.yaml
-	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/revisions/default/ingressgateway-deployment.yaml
+	@kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/ingressgateway-service.k8s.yaml
+	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/ingressgateway-gateway.k8s.yaml
+	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/revisions/default/ingressgateway-deployment.k8s.yaml
+
+	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/egressgateway-service.k8s.yaml
+	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/egressgateway-gateway.k8s.yaml
+	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/revisions/default/egressgateway-deployment.k8s.yaml
+	$(MAKE) deploy-gateway-service-entries
 	$(MAKE) deploy-gateway-routes
 
 .PHONY: deploy-gateway-routes
 .ONESHELL:
 deploy-gateway-routes:
 	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/routes/
+
+.PHONY: deploy-gateway-service-entries
+.ONESHELL:
+deploy-gateway-service-entries:
+	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/service-entries/
+
+.PHONY: install-kiali-helm-repo
+.ONESHELL:
+install-kiali-helm-repo:
+	helm repo add kiali https://kiali.org/helm-charts || true
+	helm repo update
+
+.PHONY: deploy-kiali
+.ONESHELL:
+deploy-kiali:
+	@release="$(KIALI_RELEASE_NAME)"
+	namespace="$(KIALI_NAMESPACE)"
+	values="$(MAKEFILE_DIR)kiali/values.yaml"
+	chart="kiali/kiali-operator"
+	desired_values=$$(yq -o=json "$$values" | jq -S -c .)
+
+	metadata_json=$$(helm get metadata "$$release" \
+	  --namespace "$$namespace" \
+	  --kube-context $(KUBECTL_CONTEXT) \
+	  -o json 2>/dev/null || true)
+
+	if [ -n "$$metadata_json" ]; then
+		current_version=$$(echo "$$metadata_json" | jq -r '.version // empty')
+		current_values=$$(helm get values "$$release" \
+		  --namespace "$$namespace" \
+		  --kube-context $(KUBECTL_CONTEXT) \
+		  -o json | jq -S -c .)
+
+		if [ "$$current_values" = "$$desired_values" ] && [ "$$current_version" = "$(KIAlI_CHART_VERSION)" ]; then
+			echo "Kiali Operator release '$$release' already matches $$values (chart $(KIAlI_CHART_VERSION)); Skipping.";
+			exit 0;
+		fi
+
+		echo "Upgrading Kiali Operator release '$$release'...";
+		helm upgrade "$$release" "$$chart" \
+		  --kube-context $(KUBECTL_CONTEXT) \
+		  --namespace "$$namespace" \
+		  --version $(KIAlI_CHART_VERSION) \
+		  --values "$$values" \
+		  --wait \
+		  --timeout $(WAIT_TIMEOUT);
+	else
+		echo "Installing Kiali Operator release '$$release'...";
+		helm install "$$release" "$$chart" \
+		  --kube-context $(KUBECTL_CONTEXT) \
+		  --namespace "$$namespace" \
+		  --create-namespace \
+		  --version $(KIAlI_CHART_VERSION) \
+		  --values "$$values" \
+		  --wait \
+		  --timeout $(WAIT_TIMEOUT);
+	fi
 
 # apps targets
 .PHONY: build-container-image
@@ -685,7 +754,6 @@ deploy-app-1:
 	export CONTAINER_IMAGE_TAG
 	envsubst '$${CONTAINER_IMAGE_TAG}' < $(MAKEFILE_DIR)apps/app-1/deployment.k8s.yaml | kubectl --context $(KUBECTL_CONTEXT) apply -f -
 	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)apps/app-1/service.k8s.yaml
-	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)apps/app-1/httproute.k8s.yaml
 	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)apps/app-1/scrape.k8s.yaml
 
 .PHONY: deploy-app-2
@@ -706,7 +774,6 @@ deploy-app-2:
 		kubectl --context $(KUBECTL_CONTEXT) apply -f -
 
 	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)apps/app-2/service.k8s.yaml
-	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)apps/app-2/httproute.k8s.yaml
 	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)apps/app-2/scrape.k8s.yaml
 
 .PHONY: start-replay-job

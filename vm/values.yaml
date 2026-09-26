@@ -28,7 +28,7 @@ vmsingle:
         cpu: 250m
         memory: 512Mi
     storage:
-      storageClassName: "standard"
+      storageClassName: "csi-hostpath-sc"
       resources:
         requests:
           storage: 10Gi

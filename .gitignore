@@ -2,3 +2,4 @@ tmp/
 .env
 csi-driver-host-path
 /istio/
+EGRESS-GUIDE.md

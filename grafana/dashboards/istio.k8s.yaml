@@ -1,0 +1,122 @@
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaFolder
+metadata:
+  name: istio
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  title: Istio
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: istio-mesh
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  folderRef: istio
+  grafanaCom:
+    id: 7639
+  datasources:
+    - datasourceName: DS_PROMETHEUS
+      inputName: VictoriaMetrics
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: istio-performance
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  folderRef: istio
+  grafanaCom:
+    id: 11829
+  datasources:
+    - datasourceName: DS_PROMETHEUS
+      inputName: VictoriaMetrics
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: istio-service
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  folderRef: istio
+  grafanaCom:
+    id: 7636
+  datasources:
+    - datasourceName: DS_PROMETHEUS
+      inputName: VictoriaMetrics
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: istio-workload
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  folderRef: istio
+  grafanaCom:
+    id: 7630
+  datasources:
+    - datasourceName: DS_PROMETHEUS
+      inputName: VictoriaMetrics
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: istio-control-plane
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  folderRef: istio
+  grafanaCom:
+    id: 7645
+  datasources:
+    - datasourceName: DS_PROMETHEUS
+      inputName: VictoriaMetrics
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: istio-wasm
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  folderRef: istio
+  grafanaCom:
+    id: 13277
+  datasources:
+    - datasourceName: DS_PROMETHEUS
+      inputName: VictoriaMetrics
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: istio-ztunnel
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: grafana
+  folderRef: istio
+  grafanaCom:
+    id: 21306
+  datasources:
+    - datasourceName: DS_PROMETHEUS
+      inputName: VictoriaMetrics

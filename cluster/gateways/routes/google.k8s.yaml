@@ -1,0 +1,71 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: google-http-to-egress
+  namespace: istio-gateway
+spec:
+  parentRefs:
+    - group: networking.istio.io
+      kind: ServiceEntry
+      name: google
+      sectionName: http
+  hostnames:
+    - google.com
+  rules:
+    - backendRefs:
+        - name: egressgateway
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: google-http-from-egress
+  namespace: istio-gateway
+spec:
+  parentRefs:
+    - name: egressgateway
+      sectionName: http-google
+  hostnames:
+    - google.com
+  rules:
+    - backendRefs:
+        - group: networking.istio.io
+          kind: Hostname
+          name: google.com
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: google-tls-to-egress
+  namespace: istio-gateway
+spec:
+  parentRefs:
+    - group: networking.istio.io
+      kind: ServiceEntry
+      name: google
+      sectionName: tls
+  hostnames:
+    - google.com
+  rules:
+    - backendRefs:
+        - name: egressgateway
+          port: 443
+---
+apiVersion: gateway.networking.k8s.io/v1alpha2
+kind: TLSRoute
+metadata:
+  name: google-tls-from-egress
+  namespace: istio-gateway
+spec:
+  parentRefs:
+    - name: egressgateway
+      sectionName: tls-google
+  hostnames:
+    - google.com
+  rules:
+    - backendRefs:
+        - group: networking.istio.io
+          kind: Hostname
+          name: google.com
+          port: 443
