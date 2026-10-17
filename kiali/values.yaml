@@ -5,6 +5,12 @@ cr:
     auth:
       strategy: anonymous
     deployment:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          memory: 256Mi
       # Tempo query-frontend inbound 3200 is excluded from the sidecar
       # (HTTP/2/mTLS breaks the HTTP API). Grafana already bypasses 3200
       # the same way; Kiali health/version checks must too.

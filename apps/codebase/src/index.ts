@@ -3,7 +3,11 @@
 import "./logs/axios-logger.js";
 import express from "express";
 import { httpLogger, captureResponseBody } from "./logs/http-logger.js";
-import { port } from "./global/env-vars.js";
+import {
+  otelServiceName,
+  otelServiceVersion,
+  port,
+} from "./global/env-vars.js";
 import { errorHandler } from "./middlewares/error-handling.js";
 import { shutdown } from "./shutdown.js";
 import { logger } from "./logs/logger.js";
@@ -16,6 +20,7 @@ import {
   startReplayJob,
   stopReplayJob,
 } from "./jobs/replay-job.js";
+import { version } from "node:os";
 
 const app = express();
 
@@ -77,6 +82,14 @@ app.get("/replay-extended/:jobId", (req, res, _next) => {
   }
 
   return res.json(job);
+});
+
+app.get("/version", (_req, res, _next) => {
+  return res.json({
+    version: `${otelServiceVersion}`,
+    service: `${otelServiceName}`,
+    message: "Hello world",
+  });
 });
 
 app.delete("/replay-extended/:jobId", (req, res, _next) => {

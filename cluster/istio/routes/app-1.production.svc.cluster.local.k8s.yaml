@@ -1,0 +1,59 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: app-1.production.svc.cluster.local
+  namespace: production
+spec:
+  hosts:
+  - app-1.production.svc.cluster.local
+  http:
+    # - name: redirect-to-version
+    #   match:
+    #     - headers:
+    #         x-version:
+    #           exact: af57fef9
+
+    #       uri:
+    #         exact: /non-existent-path
+
+    #   redirect:
+    #     uri: /version
+
+    - name: header-based-route-version-af57fef9
+      match:
+        - headers:
+            x-version:
+              exact: af57fef9
+
+      route:
+        - destination:
+            host: app-1.production.svc.cluster.local
+            subset: af57fef9
+
+    - name: header-based-route-version-dbc9c9bb
+      match:
+        - headers:
+            x-version:
+              exact: dbc9c9bb
+      route:
+        - destination:
+            host: app-1.production.svc.cluster.local
+            subset: dbc9c9bb      
+
+    - name: weighted-route
+      route:
+        - destination:
+            host: app-1.production.svc.cluster.local
+            subset: af57fef9
+          weight: 70
+
+        - destination:
+            host: app-1.production.svc.cluster.local
+            subset: dbc9c9bb
+          weight: 30
+
+      fault:
+        abort:
+          percentage:
+            value: 50
+          httpStatus: 500

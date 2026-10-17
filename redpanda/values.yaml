@@ -1,4 +1,5 @@
-# Redpanda is the Kafka-compatible durable write buffer required by Tempo 3.
+# Optional broker for the former distributed Tempo 3 write path.
+# Compact Tempo does not use Kafka; start-cluster no longer deploys it.
 # This is intentionally a single-broker development configuration for Kind.
 
 fullnameOverride: tempo-kafka

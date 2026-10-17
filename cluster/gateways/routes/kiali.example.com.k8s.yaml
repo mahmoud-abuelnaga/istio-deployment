@@ -1,0 +1,18 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: kiali.example.com
+  namespace: istio-system
+  labels:
+    app.kubernetes.io/name: kiali
+spec:
+  hosts:
+    - kiali.example.com
+  gateways:
+    - istio-gateway/ingressgateway
+  http:
+    - route:
+        - destination:
+            host: kiali.istio-system.svc.cluster.local
+            port:
+              number: 20001

@@ -12,6 +12,10 @@ alloy:
   # Alloy.
   enableReporting: false
   storagePath: /var/lib/alloy
+  extraEnv:
+    # Soft Go heap budget below the existing 256Mi container limit.
+    - name: GOMEMLIMIT
+      value: "200MiB"
 
   # extraPorts:
   #     - name: otlp-grpc
@@ -56,7 +60,7 @@ alloy:
   resources:
     requests:
       cpu: 25m
-      memory: 128Mi
+      memory: 96Mi
     limits:
       cpu: 200m
       memory: 256Mi

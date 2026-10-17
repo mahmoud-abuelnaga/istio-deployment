@@ -1,4 +1,10 @@
 victoria-metrics-operator:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
   operator:
     enable_converter_ownership: true
 
@@ -20,10 +26,12 @@ vmsingle:
     retentionPeriod: "10d"
     extraArgs:
       search.cacheTimestampOffset: 10m
+      # Cache budget only; leave memory for ingestion and query execution.
+      memory.allowedPercent: "30"
     resources:
       requests:
         cpu: 50m
-        memory: 256Mi
+        memory: 128Mi
       limits:
         cpu: 250m
         memory: 512Mi
@@ -51,6 +59,8 @@ vmalert:
 
 vmagent:
   spec:
+    extraArgs:
+      memory.allowedPercent: "40"
     podMetadata:
       annotations:
         traffic.sidecar.istio.io/excludeOutboundPorts: "15090"
@@ -69,6 +79,22 @@ vmagent:
     # discards labels with an empty value on ingestion.
     externalLabels:
       prometheus: ""
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 5m
+      memory: 16Mi
+    limits:
+      memory: 64Mi
 
 alertmanager:
   spec:

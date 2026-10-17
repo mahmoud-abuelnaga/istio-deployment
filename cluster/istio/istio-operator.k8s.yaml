@@ -14,11 +14,19 @@ spec:
           service: tempo-distributor.monitoring.svc.cluster.local
 
     defaultConfig:
+      # One Envoy worker is enough for the fractional CPU budgets in Kind.
+      # Each additional worker duplicates connection pools and thread-local state.
+      concurrency: 1
       tracing: {}
       proxyMetadata:
         # Kind nodes are docker-stop'd overnight. Default 24h workload certs
         # expire while the cluster is frozen and SDS never rotates. Max is 90d.
         SECRET_TTL: "2160h"
+      proxyStatsMatcher:
+        inclusionRegexps:
+          - ".*overflow.*"
+          - ".*circuit_breakers.*"
+          - ".*outlier_detection.*"
   components:
     pilot:
       k8s:
@@ -27,7 +35,7 @@ spec:
         resources:
           requests:
             cpu: 50m
-            memory: 256Mi
+            memory: 128Mi
           limits:
             cpu: 500m
             memory: 512Mi
@@ -39,7 +47,7 @@ spec:
         resources:
           requests:
             cpu: 10m
-            memory: 64Mi
+            memory: 48Mi
           limits:
             cpu: 200m
             memory: 256Mi
@@ -48,7 +56,6 @@ spec:
       env:
         DEFAULT_WORKLOAD_CERT_TTL: "2160h"
         MAX_WORKLOAD_CERT_TTL: "2160h"
-        PILOT_ENABLE_ALPHA_GATEWAY_API: "true"
   # meshConfig:
   #   extensionProviders:
   #     - name: otel-tracing

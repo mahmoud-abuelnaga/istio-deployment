@@ -1,0 +1,18 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: app-2.example.com
+  namespace: production
+  labels:
+    app.kubernetes.io/name: app-2
+spec:
+  hosts:
+    - app-2.example.com
+  gateways:
+    - istio-gateway/ingressgateway
+  http:
+    - route:
+        - destination:
+            host: app-2.production.svc.cluster.local
+            port:
+              number: 80

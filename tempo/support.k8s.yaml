@@ -1,0 +1,132 @@
+# Stable endpoints and health alerts alongside the official Tempo chart.
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo-distributor
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: tempo-compatibility
+    app.kubernetes.io/instance: tempo
+spec:
+  ports:
+  - name: http-metrics
+    port: 3200
+    targetPort: 3200
+  - name: otlp-grpc
+    port: 4317
+    targetPort: 4317
+  - name: otlp-http
+    port: 4318
+    targetPort: 4318
+  selector:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/instance: tempo
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo-query-frontend
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: tempo-compatibility
+    app.kubernetes.io/instance: tempo
+spec:
+  ports:
+  - name: http-metrics
+    port: 3200
+    targetPort: 3200
+  selector:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/instance: tempo
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo-memcached
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: tempo-compatibility
+    app.kubernetes.io/instance: tempo
+spec:
+  ports:
+  - name: memcached-client
+    port: 11211
+    targetPort: 11211
+  selector:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/instance: tempo
+  clusterIP: None
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: tempo-plain-http
+  namespace: monitoring
+spec:
+  host: tempo.monitoring.svc.cluster.local
+  trafficPolicy:
+    portLevelSettings:
+    - port:
+        number: 3200
+      tls:
+        mode: DISABLE
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: tempo-headless-plain-http
+  namespace: monitoring
+spec:
+  host: tempo-headless.monitoring.svc.cluster.local
+  trafficPolicy:
+    portLevelSettings:
+    - port:
+        number: 3200
+      tls:
+        mode: DISABLE
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: tempo-query-frontend-plain-http
+  namespace: monitoring
+spec:
+  host: tempo-query-frontend.monitoring.svc.cluster.local
+  trafficPolicy:
+    portLevelSettings:
+    - port:
+        number: 3200
+      tls:
+        mode: DISABLE
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: tempo
+  namespace: monitoring
+spec:
+  groups:
+  - name: tempo-health
+    rules:
+    - alert: TempoComponentDown
+      expr: up{namespace="monitoring",service="tempo"} == 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: Tempo is unavailable
+    - alert: TempoLiveStoreNotReady
+      expr: tempo_live_store_ready{namespace="monitoring",service="tempo"} < 1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: Tempo live-store is not ready
+    - alert: TempoLiveStoreDroppingRecords
+      expr: rate(tempo_live_store_records_dropped_total{namespace="monitoring",service="tempo"}[5m])
+        > 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: Tempo live-store is dropping records

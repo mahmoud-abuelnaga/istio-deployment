@@ -1,246 +1,328 @@
-# tempo-distributed 3.0.6 (Tempo 3.0.2)
-# Development-sized, single-partition deployment for the local Kind POC.
-
+# Official grafana-community/tempo monolithic chart 3.1.0.
+# Keep Tempo 3.0.2 and the existing runtime configuration.
 fullnameOverride: tempo
-
-reportingEnabled: false
-multitenancyEnabled: false
-streamOverHTTPEnabled: true
-
-global:
-  storageClass: csi-hostpath-sc
-
-server:
-  http_server_read_timeout: 300s
-  http_server_write_timeout: 300s
-
-defaults:
-  # Keep S3 credentials out of the generated Tempo ConfigMap. Tempo expands
-  # ${...} references after the Secret has been injected into each component.
-  extraArgs:
-    - -config.expand-env=true
-  extraEnvFrom:
-    - secretRef:
-        name: tempo-s3
-  # Memberlist gossip on 7946 is delayed/reset by the sidecar, which produces
-  # "Refuting a suspect message" warnings. Keep gossip off-mesh.
-  podAnnotations:
-    traffic.sidecar.istio.io/excludeInboundPorts: "7946"
-    traffic.sidecar.istio.io/excludeOutboundPorts: "7946"
+replicas: 1
+tempo:
+  tag: 3.0.2
+  reportingEnabled: false
+  streamOverHttpEnabled: true
+  metricsGenerator:
+    enabled: true
   resources:
     requests:
-      cpu: 25m
-      memory: 64Mi
-    limits:
-      cpu: 150m
+      cpu: 100m
       memory: 256Mi
-
-storage:
-  trace:
-    backend: s3
-    s3:
-      bucket: ${S3_BUCKET}
-      endpoint: ${S3_ENDPOINT}
-      access_key: ${S3_ACCESS_KEY}
-      secret_key: ${S3_SECRET_KEY}
-      insecure: true
-      forcepathstyle: true
-
-# Tempo 3 microservices mode writes every span to Kafka. The partition count
-# must match the block-builder and live-store replica counts below.
-ingest:
-  kafka:
-    address: tempo-kafka.monitoring.svc.cluster.local:9093
-    topic: tempo-traces
-    auto_create_topic_enabled: true
-    auto_create_topic_default_partitions: 1
-
-traces:
-  otlp:
-    grpc:
-      enabled: true
-    http:
-      enabled: true
-
-distributor:
-  replicas: 1
-
-blockBuilder:
+    limits:
+      memory: 1Gi
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+  extraArgs:
+    config.expand-env: 'true'
+    target: all
+  extraEnv:
+  - name: GOMEMLIMIT
+    value: 870MiB
+  extraEnvFrom:
+  - secretRef:
+      name: tempo-s3
+  extraVolumeMounts:
+  - name: tempo-data
+    mountPath: /var/tempo
+  livenessProbe: null
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: 3200
+    periodSeconds: 5
+    timeoutSeconds: 3
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+persistence:
+  # Reuse the existing WAL claim rather than creating a new data volume.
+  enabled: false
+  enableStatefulSetAutoDeletePVC: false
+  size: 10Gi
+  storageClassName: csi-hostpath-sc
+serviceAccount:
+  automountServiceAccountToken: false
+podAnnotations:
+  traffic.sidecar.istio.io/excludeInboundPorts: 3200,7946
+  traffic.sidecar.istio.io/excludeOutboundPorts: '7946'
+serviceMonitor:
   enabled: true
-  replicas: 1
-
-liveStore:
-  enabled: true
-  replicas: 1
-
-backendScheduler:
-  enabled: true
-  config:
+  interval: 30s
+extraVolumes:
+- name: tempo-data
+  persistentVolumeClaim:
+    claimName: wal-tempo-metrics-generator-0
+extraContainers:
+- name: memcached
+  image: docker.io/memcached:1.6.45-alpine
+  args:
+  - -m
+  - '32'
+  - -t
+  - '1'
+  - -c
+  - '1024'
+  ports:
+  - name: memcached
+    containerPort: 11211
+  resources:
+    limits:
+      cpu: 50m
+      memory: 64Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+  readinessProbe:
+    tcpSocket:
+      port: memcached
+    periodSeconds: 5
+  livenessProbe:
+    tcpSocket:
+      port: memcached
+    periodSeconds: 10
+# Applied by deploy-tempo; the upstream chart does not expose this pod field.
+terminationGracePeriodSeconds: 120
+config: |
+  backend_scheduler:
+    backend_flush_interval: 1m
+    job_timeout: 15s
+    local_work_path: /var/tempo/backend-scheduler
+    maintenance_interval: 1m
     provider:
       compaction:
         compaction:
-          # Preserve the TempoStack 336h (14-day) trace retention.
           block_retention: 336h
-
-backendWorker:
-  replicas: 1
-
-querier:
-  replicas: 1
-  config:
-    search:
-      query_timeout: 280s
-
-queryFrontend:
-  replicas: 1
-  # Grafana streams gRPC over HTTP/2 to :3200. Sidecar inbound would force
-  # HTTP/1.1 onto Tempo and streaming 404s. Scrapes of :3200 use a DestinationRule
-  # with TLS disabled (tempo/query-frontend-destinationrule.k8s.yaml).
-  podAnnotations:
-    traffic.sidecar.istio.io/excludeInboundPorts: "3200,7946"
-    traffic.sidecar.istio.io/excludeOutboundPorts: "7946"
-  config:
-    metrics:
-      query_backend_after: 15m
-
-metricsGenerator:
-  enabled: true
-  kind: StatefulSet
-  replicas: 1
-  persistence:
-    enabled: true
-    size: 10Gi
-    storageClass: csi-hostpath-sc
-  config:
-    registry:
-      collection_interval: 15s
-      external_labels:
-        source: tempo
-      stale_duration: 15m
+          compacted_block_retention: 1h
+          compaction_cycle: 30s
+          compaction_window: 1h
+          max_block_bytes: 107374182400
+          max_compaction_objects: 6000000
+          max_time_per_tenant: 5m
+          retention_concurrency: 10
+        max_compaction_level: 0
+        max_input_blocks: 4
+        max_jobs_per_tenant: 1000
+        min_cycle_interval: 30s
+        min_input_blocks: 2
+      retention:
+        interval: 1h
+    work:
+      dead_job_timeout: 24h
+      prune_age: 1h
+  backend_worker:
+    backend_scheduler_addr: 127.0.0.1:9095
+    backoff:
+      max_period: 1m
+      max_retries: 0
+      min_period: 100ms
+    compaction:
+      block_retention: 336h
+      compacted_block_retention: 1h
+      compaction_cycle: 30s
+      compaction_window: 1h
+      max_block_bytes: 107374182400
+      max_compaction_objects: 6000000
+      max_time_per_tenant: 5m
+      retention_concurrency: 10
+    finish_on_shutdown_timeout: 30s
+    ring:
+      kvstore:
+        store: memberlist
+  cache:
+    caches:
+    - memcached:
+        consistent_hash: true
+        host: tempo-memcached
+        service: memcached-client
+        timeout: 500ms
+      roles:
+      - parquet-footer
+      - bloom
+      - frontend-search
+  distributor:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    ring:
+      kvstore:
+        store: memberlist
+  live_store:
+    ring:
+      kvstore:
+        store: memberlist
+    wal:
+      path: /var/tempo/live-store/traces
+  memberlist:
+    abort_if_cluster_join_fails: false
+    bind_addr: []
+    bind_port: 7946
+    cluster_label: tempo.monitoring
+    gossip_interval: 1s
+    gossip_nodes: 2
+    gossip_to_dead_nodes_time: 30s
+    join_members: []
+    leave_timeout: 5s
+    left_ingesters_timeout: 5m
+    max_join_backoff: 1m
+    max_join_retries: 10
+    min_join_backoff: 1s
+    node_name: ''
+    packet_dial_timeout: 5s
+    packet_write_timeout: 5s
+    pull_push_interval: 30s
+    randomize_node_name: true
+    rejoin_interval: 0s
+    retransmit_factor: 2
+    stream_timeout: 10s
+  metrics_generator:
+    metrics_ingestion_time_range_slack: 30s
     processor:
       service_graphs:
-        enable_client_server_prefix: true
         dimensions:
-          - service.namespace
-          - service.version
+        - service.namespace
+        - service.version
+        enable_client_server_prefix: true
         histogram_buckets:
-          - 0.1
-          - 0.2
-          - 0.4
-          - 0.8
-          - 1.6
-          - 3.2
-          - 6.4
-          - 12.8
+        - 0.1
+        - 0.2
+        - 0.4
+        - 0.8
+        - 1.6
+        - 3.2
+        - 6.4
+        - 12.8
         max_items: 10000
         wait: 10s
         workers: 2
       span_metrics:
         dimensions:
-          - service.namespace
-          - service.version
+        - service.namespace
+        - service.version
         histogram_buckets:
-          - 0.002
-          - 0.004
-          - 0.008
-          - 0.016
-          - 0.032
-          - 0.064
-          - 0.128
-          - 0.256
-          - 0.512
-          - 1.02
-          - 2.05
-          - 4.1
+        - 0.002
+        - 0.004
+        - 0.008
+        - 0.016
+        - 0.032
+        - 0.064
+        - 0.128
+        - 0.256
+        - 0.512
+        - 1.02
+        - 2.05
+        - 4.1
+    registry:
+      collection_interval: 15s
+      external_labels:
+        source: tempo
+      stale_duration: 15m
+    ring:
+      kvstore:
+        store: memberlist
     storage:
       path: /var/tempo/wal
-      wal: {}
+      remote_write:
+      - send_exemplars: true
+        url: http://vmsingle-vm-victoria-metrics-k8s-stack.monitoring.svc.cluster.local:8428/api/v1/write
+        write_relabel_configs:
+        - action: replace
+          regex: (.+)
+          source_labels:
+          - service_namespace
+          target_label: namespace
+        - action: labeldrop
+          regex: service_namespace
       remote_write_add_org_id_header: false
       remote_write_flush_deadline: 1m
-      remote_write:
-        - url: http://vmsingle-vm-victoria-metrics-k8s-stack.monitoring.svc.cluster.local:8428/api/v1/write
-          send_exemplars: true
-          # `service_namespace` is derived from the service.namespace dimension
-          # above and is the one label in this stack that follows no
-          # convention: scraped targets get `namespace` from the
-          # VictoriaMetrics operator and Alloy sets `namespace` on Loki
-          # streams. Rewrite it so every signal names the Kubernetes namespace
-          # the same way.
-          #
-          # `service` is deliberately left alone: Tempo hardcodes it for
-          # service.name, which matches both the Prometheus convention and the
-          # label the operator puts on scraped targets.
-          #
-          # Relabel regexes are fully anchored, so this matches `service_namespace`
-          # exactly and leaves the service-graph dimensions
-          # (`client_service_namespace`/`server_service_namespace`, prefixed by
-          # enable_client_server_prefix) untouched.
-          write_relabel_configs:
-            - source_labels: [service_namespace]
-              target_label: namespace
-              regex: (.+)
-              action: replace
-            - regex: service_namespace
-              action: labeldrop
-    metrics_ingestion_time_range_slack: 30s
-
-overrides:
-  defaults:
-    metrics_generator:
-      processors:
+      wal: {}
+  multitenancy_enabled: false
+  overrides:
+    defaults:
+      metrics_generator:
+        processors:
         - service-graphs
         - span-metrics
-
-memcached:
-  enabled: true
-  replicas: 1
-  resources:
-    requests:
-      cpu: 10m
-      memory: 32Mi
-    limits:
-      cpu: 50m
-      memory: 64Mi
-
-gateway:
-  enabled: false
-
-# These replace TempoStack spec.observability.metrics. VictoriaMetrics
-# Operator converts both Prometheus Operator resource types automatically.
-metaMonitoring:
-  serviceMonitor:
-    enabled: true
-    interval: 30s
-
-prometheusRule:
-  enabled: true
-  # namespace: monitoring
-  groups:
-    - name: tempo-health
-      rules:
-        - alert: TempoComponentDown
-          expr: up{job=~".*/(backend-scheduler|backend-worker|block-builder|distributor|live-store|metrics-generator|querier|query-frontend)"} == 0
-          for: 5m
-          labels:
-            severity: warning
-          annotations:
-            summary: Tempo component is unavailable
-            description: "{{ $labels.job }} has been unavailable for more than five minutes."
-        - alert: TempoLiveStoreNotReady
-          # Every Tempo component exports this gauge; only live-store pods set
-          # it to 1. Filter by job or the alert fires for all other pods.
-          expr: tempo_live_store_ready{job=~".*/live-store"} < 1
-          for: 5m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Tempo live-store {{ $labels.pod }} is not ready"
-            description: "Tempo live-store {{ $labels.pod }} has been unready for more than five minutes."
-        - alert: TempoLiveStoreDroppingRecords
-          expr: rate(tempo_live_store_records_dropped_total[5m]) > 0
-          for: 5m
-          labels:
-            severity: critical
-          annotations:
-            summary: "Tempo live-store {{ $labels.pod }} is dropping trace records"
-            description: "Tempo live-store {{ $labels.pod }} has dropped Kafka records during the last five minutes."
+    per_tenant_override_config: /conf/overrides.yaml
+  querier:
+    frontend_worker:
+      frontend_address: 127.0.0.1:9095
+    max_concurrent_queries: 2
+    search:
+      query_timeout: 280s
+    trace_by_id:
+      query_timeout: 10s
+  query_frontend:
+    max_outstanding_per_tenant: 2000
+    max_retries: 2
+    mcp_server:
+      enabled: false
+    metrics:
+      concurrent_jobs: 16
+      duration_slo: 0s
+      interval: 5m
+      max_duration: 3h
+      query_backend_after: 15m
+      target_bytes_per_job: 104857600
+      throughput_bytes_slo: 0
+    search:
+      concurrent_jobs: 16
+      max_spans_per_span_set: 100
+      target_bytes_per_job: 104857600
+    trace_by_id:
+      query_shards: 8
+  server:
+    grpc_server_max_recv_msg_size: 4194304
+    grpc_server_max_send_msg_size: 4194304
+    http_listen_port: 3200
+    http_server_read_timeout: 300s
+    http_server_write_timeout: 300s
+    log_format: logfmt
+    log_level: info
+  storage:
+    trace:
+      backend: s3
+      blocklist_poll: 5m
+      local:
+        path: /var/tempo/traces
+      pool:
+        max_workers: 8
+        queue_depth: 256
+      s3:
+        access_key: ${S3_ACCESS_KEY}
+        bucket: ${S3_BUCKET}
+        endpoint: ${S3_ENDPOINT}
+        forcepathstyle: true
+        insecure: true
+        secret_key: ${S3_SECRET_KEY}
+      search:
+        prefetch_trace_count: 128
+      wal:
+        path: /var/tempo/wal
+  stream_over_http_enabled: true
+  usage_report:
+    reporting_enabled: false
+  target: all

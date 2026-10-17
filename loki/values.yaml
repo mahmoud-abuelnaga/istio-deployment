@@ -1,4 +1,4 @@
-deploymentMode: Distributed
+deploymentMode: Monolithic
 
 defaults:
   extraEnv:
@@ -15,7 +15,15 @@ defaults:
 
 loki:
   auth_enabled: false
+  # The one-process ring has no remote peers; the chart otherwise points at
+  # a memberlist Service it does not create for a single monolithic replica.
+  memberlistConfig:
+    join_members: []
   limits_config:
+    # Match query fan-out to the single, small querier instead of queuing
+    # hundreds of subqueries and holding their intermediate results in memory.
+    max_query_parallelism: 4
+    tsdb_max_query_parallelism: 4
     # Raised from the 256KB default: the vm-operator occasionally emits
     # single log lines >300KB. Truncate is a safety net so an even bigger
     # line can't make the distributor reject (and drop) the whole batch.
@@ -30,6 +38,11 @@ loki:
     retention_period: 720h
   commonConfig:
     replication_factor: 1
+    # All modules share this process. Use an explicit local ring rather than
+    # falling back to Consul when the memberlist peer list is empty.
+    ring:
+      kvstore:
+        store: inmemory
   storage:
     bucketNames:
       chunks: loki-chunks
@@ -55,16 +68,23 @@ loki:
           prefix: loki_index_
           period: 24h
   compactor:
-    working_directory: /var/loki/compactor
+    working_directory: /var/loki-compactor/compactor
     retention_enabled: true
     retention_delete_delay: 2h
     retention_delete_worker_count: 10
     delete_request_store: s3
+  rulerConfig:
+    wal:
+      dir: /var/loki-ruler/ruler-wal
   pattern_ingester:
     enabled: true
   ingester:
     wal:
       dir: /var/loki/wal
+      # Replay in batches rather than using the default 4GB ceiling at boot.
+      replay_memory_ceiling: 128MB
+  querier:
+    max_concurrent: 2
   bloom_build:
     enabled: false
     planner:
@@ -85,9 +105,54 @@ gateway:
   verboseLogging: false
   # Single Kind worker cannot satisfy hard hostname anti-affinity.
   affinity: {}
+  resources:
+    requests:
+      cpu: 5m
+      memory: 16Mi
+    limits:
+      memory: 64Mi
 
-# SimpleScalable targets are on by default; Distributed mode uses the
-# microservices components below instead.
+# One process runs ingestion, querying, scheduling, compaction, patterns and
+# the ruler. Keep burst CPU available while bounding the shared Go heap.
+singleBinary:
+  replicas: 1
+  podAnnotations:
+    istio-poc/loki-storage-layout: distributed-v1
+  sidecar: false
+  affinity: {}
+  terminationGracePeriodSeconds: 120
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 768Mi
+  persistence:
+    # Reuse the existing ingestion, compactor and ruler volumes.
+    enabled: false
+    dataVolumeParameters:
+      persistentVolumeClaim:
+        claimName: data-loki-ingester-0
+    size: 10Gi
+    storageClass: csi-hostpath-sc
+    enableStatefulSetAutoDeletePVC: false
+    whenDeleted: Retain
+    whenScaled: Retain
+  extraVolumes:
+    - name: distributed-compactor
+      persistentVolumeClaim:
+        claimName: data-loki-compactor-0
+    - name: distributed-ruler
+      persistentVolumeClaim:
+        claimName: data-loki-ruler-0
+  extraVolumeMounts:
+    - name: distributed-compactor
+      mountPath: /var/loki-compactor
+    - name: distributed-ruler
+      mountPath: /var/loki-ruler
+
+# The modules still run inside -target=all. Only their standalone workloads
+# are disabled; ruler.enabled must stay true to generate its S3 configuration.
 write:
   enabled: false
   replicas: 0
@@ -97,102 +162,74 @@ read:
 backend:
   enabled: false
   replicas: 0
-
 ingester:
-  replicas: 1
-  affinity: {}
-  persistence:
-    enabled: true
-    claims:
-      - name: data
-        accessModes:
-          - ReadWriteOnce
-        size: 10Gi
-        storageClass: csi-hostpath-sc
+  replicas: 0
   zoneAwareReplication:
     enabled: false
-
 distributor:
-  replicas: 1
-  affinity: {}
-
+  replicas: 0
 querier:
-  replicas: 1
-  affinity: {}
-
+  replicas: 0
 queryFrontend:
-  replicas: 1
-  affinity: {}
-
+  replicas: 0
 queryScheduler:
-  replicas: 1
-  affinity: {}
-
+  replicas: 0
 indexGateway:
-  replicas: 1
-  affinity: {}
-  persistence:
-    enabled: true
-    storageClass: csi-hostpath-sc
-
+  replicas: 0
 compactor:
-  replicas: 1
-  affinity: {}
-  persistence:
-    enabled: true
-    storageClass: csi-hostpath-sc
-    claims:
-      - name: data
-        accessModes:
-          - ReadWriteOnce
-        size: 10Gi
-        storageClass: csi-hostpath-sc
-
+  replicas: 0
+patternIngester:
+  replicas: 0
+ruler:
+  enabled: true
+  replicas: 0
 bloomGateway:
   enabled: false
   replicas: 0
-
 bloomPlanner:
   enabled: false
   replicas: 0
-
 bloomBuilder:
   enabled: false
   replicas: 0
-
-patternIngester:
-  enabled: true
-  replicas: 1
-  affinity: {}
-  persistence:
-    storageClass: csi-hostpath-sc
-    claims:
-      - name: data
-        accessModes:
-          - ReadWriteOnce
-        size: 10Gi
-        storageClass: csi-hostpath-sc
-
-ruler:
-  replicas: 1
-  affinity: {}
-  persistence:
-    enabled: true
-    storageClass: csi-hostpath-sc
 
 # Kind worker allocatable is ~13Gi. Chart defaults request 1024Mi for
 # results-cache and 8192Mi for chunks-cache (plus an optional L2), which
 # will not schedule after Kafka and VictoriaMetrics.
 resultsCache:
-  allocatedMemory: 64
-  allocatedCPU: 25m
+  allocatedMemory: 32
+  allocatedCPU: 10m
+  connectionLimit: 1024
+  # These are client-side buffers, separate from the memcached allocation.
+  writebackSizeLimit: 16MB
+  writebackBuffer: 256
+  extraArgs:
+    t: "1"
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 96Mi
   persistence:
     enabled: true
     storageClass: csi-hostpath-sc
 
 chunksCache:
-  allocatedMemory: 128
-  allocatedCPU: 25m
+  allocatedMemory: 64
+  allocatedCPU: 10m
+  connectionLimit: 1024
+  parallelism: 2
+  writebackSizeLimit: 16MB
+  writebackBuffer: 256
+  extraArgs:
+    t: "1"
+  resources:
+    requests:
+      cpu: 10m
+      memory: 96Mi
+    limits:
+      memory: 128Mi
   persistence:
     enabled: true
     storageClass: csi-hostpath-sc

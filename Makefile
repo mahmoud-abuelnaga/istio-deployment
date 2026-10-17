@@ -61,7 +61,7 @@ GRAFANA_OPERATOR_CHART_VERSION ?= 5.24.0
 
 # tempo
 TEMPO_RELEASE_NAME ?= tempo
-TEMPO_CHART_VERSION ?= 3.0.6
+TEMPO_CHART_VERSION ?= 3.1.0
 
 # loki
 LOKI_RELEASE_NAME ?= loki
@@ -72,10 +72,6 @@ ALLOY_CHART_VERSION ?= 1.10.1
 ALLOY_LOGS_RELEASE_NAME ?= alloy-logs
 
 # cluster targets
-.PHONY: install-gateway-crds
-install-gateway-crds:
-	kubectl kustomize "github.com/kubernetes-sigs/gateway-api/config/crd/experimental?ref=v1.4.1" | kubectl --context $(KUBECTL_CONTEXT) apply --server-side -f -
-
 .PHONY: install-calico
 install-calico:
 	kubectl --context $(KUBECTL_CONTEXT) apply -f $(CALICO_MANIFEST_URL)
@@ -169,7 +165,6 @@ start-cluster:
 	# $(MAKE) install-local-path-provisioner
 	$(MAKE) install-csi-hostpath-driver
 	$(MAKE) set-default-storage-class
-	$(MAKE) install-gateway-crds
 	$(MAKE) install-istio-bin
 	$(MAKE) deploy-istio
 	$(MAKE) tag-istio-revision
@@ -183,8 +178,6 @@ start-cluster:
 	$(MAKE) install-prometheus-crds
 	$(MAKE) install-vm-helm-repo
 	$(MAKE) deploy-vm
-	$(MAKE) install-redpanda-helm-repo
-	$(MAKE) deploy-redpanda
 	$(MAKE) create-seaweedfs-secret
 	$(MAKE) deploy-seaweedfs
 	$(MAKE) create-tempo-s3-secret
@@ -198,6 +191,8 @@ start-cluster:
 	$(MAKE) correlate-metrics-to-traces
 	$(MAKE) install-kiali-helm-repo
 	$(MAKE) deploy-kiali
+	$(MAKE) deploy-destination-rules
+	$(MAKE) deploy-in-cluster-routes
 	$(MAKE) deploy-gateway
 
 .PHONY: stop-cluster
@@ -640,6 +635,11 @@ unlabel-istio-revision-on-namespace:
 deploy-namespaces:
 	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/namespaces/
 
+.PHONY: deploy-destination-rules
+.ONESHELL:
+deploy-destination-rules:
+	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/istio/destination-rules/
+
 .PHONY: deploy-gateway
 .ONESHELL:
 deploy-gateway:
@@ -657,6 +657,11 @@ deploy-gateway:
 .ONESHELL:
 deploy-gateway-routes:
 	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/routes/
+
+.PHONY: deploy-in-cluster-routes
+.ONESHELL:
+deploy-in-cluster-routes:
+	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/istio/routes/
 
 .PHONY: deploy-gateway-service-entries
 .ONESHELL:
@@ -744,7 +749,7 @@ get-latest-container-image-tag:
 .ONESHELL:
 deploy-app-1:
 	@echo "Deploying app-1 deployment..."
-	CONTAINER_IMAGE_TAG=$$($(MAKE) --no-print-directory -s get-latest-container-image-tag)
+	CONTAINER_IMAGE_TAG="$(if $(strip $(CONTAINER_IMAGE_TAG)),$(CONTAINER_IMAGE_TAG),$$($(MAKE) --no-print-directory -s get-latest-container-image-tag))"
 
 	if [ -z "$$CONTAINER_IMAGE_TAG" ]; then
 		echo "Error: CONTAINER_IMAGE_TAG is not set";
@@ -761,7 +766,7 @@ deploy-app-1:
 deploy-app-2:
 	@echo "Deploying app-2 deployment..."
 	ISTIOCTL=$(MAKEFILE_DIR)istio/istio-$(ISTIO_VERSION)/bin/istioctl
-	CONTAINER_IMAGE_TAG=$$($(MAKE) --no-print-directory -s get-latest-container-image-tag)
+	CONTAINER_IMAGE_TAG="$(if $(strip $(CONTAINER_IMAGE_TAG)),$(CONTAINER_IMAGE_TAG),$$($(MAKE) --no-print-directory -s get-latest-container-image-tag))"
 
 	if [ -z "$$CONTAINER_IMAGE_TAG" ]; then
 		echo "Error: CONTAINER_IMAGE_TAG is not set";
@@ -1126,50 +1131,19 @@ check-tempo-s3-secret-exists:
 .ONESHELL:
 deploy-tempo:
 	@$(MAKE) check-tempo-s3-secret-exists
-	kubectl --context $(KUBECTL_CONTEXT) apply \
-	  -f $(MAKEFILE_DIR)tempo/query-frontend-destinationrule.k8s.yaml
-
-	release="$(TEMPO_RELEASE_NAME)"
-	namespace="$(MONITORING_NAMESPACE)"
-	values="$(MAKEFILE_DIR)tempo/values.yaml"
-	chart="oci://ghcr.io/grafana-community/helm-charts/tempo-distributed"
-	desired_values=$$(yq -o=json "$$values" | jq -S -c .)
-
-	metadata_json=$$(helm get metadata "$$release" \
-	  --namespace "$$namespace" \
-	  --kube-context $(KUBECTL_CONTEXT) \
-	  -o json 2>/dev/null || true)
-
-	if [ -n "$$metadata_json" ]; then
-		current_version=$$(echo "$$metadata_json" | jq -r '.version // empty')
-		current_values=$$(helm get values "$$release" \
-		  --namespace "$$namespace" \
-		  --kube-context $(KUBECTL_CONTEXT) \
-		  -o json | jq -S -c .)
-
-		if [ "$$current_values" = "$$desired_values" ] && [ "$$current_version" = "$(TEMPO_CHART_VERSION)" ]; then
-			echo "Tempo release '$$release' already matches $$values (chart $(TEMPO_CHART_VERSION)); Skipping.";
-			exit 0;
-		fi
-
-		echo "Upgrading Tempo release '$$release'...";
-		helm upgrade "$$release" "$$chart" \
-		  --kube-context $(KUBECTL_CONTEXT) \
-		  --namespace "$$namespace" \
-		  --version $(TEMPO_CHART_VERSION) \
-		  --values "$$values" \
-		  --wait \
-		  --timeout $(WAIT_TIMEOUT);
-	else
-		echo "Installing Tempo release '$$release'...";
-		helm install "$$release" "$$chart" \
-		  --kube-context $(KUBECTL_CONTEXT) \
-		  --namespace "$$namespace" \
-		  --version $(TEMPO_CHART_VERSION) \
-		  --values "$$values" \
-		  --wait \
-		  --timeout $(WAIT_TIMEOUT);
-	fi
+	helm upgrade --install $(TEMPO_RELEASE_NAME) oci://ghcr.io/grafana-community/helm-charts/tempo \
+	  --version $(TEMPO_CHART_VERSION) --values $(MAKEFILE_DIR)tempo/values.yaml \
+	  --kube-context $(KUBECTL_CONTEXT) --namespace $(MONITORING_NAMESPACE) \
+	  --wait --timeout $(WAIT_TIMEOUT)
+	kubectl --context $(KUBECTL_CONTEXT) apply --namespace $(MONITORING_NAMESPACE) \
+	  -f $(MAKEFILE_DIR)tempo/support.k8s.yaml
+	# The upstream chart does not expose the pod termination grace period.
+	grace=$$(yq -r '.terminationGracePeriodSeconds' $(MAKEFILE_DIR)tempo/values.yaml)
+	patch=$$(jq -n --argjson grace "$$grace" '{spec: {template: {spec: {terminationGracePeriodSeconds: $$grace}}}}')
+	kubectl --context $(KUBECTL_CONTEXT) --namespace $(MONITORING_NAMESPACE) \
+	  patch statefulset tempo --field-manager=tempo-tuning --type=merge -p "$$patch"
+	kubectl --context $(KUBECTL_CONTEXT) --namespace $(MONITORING_NAMESPACE) \
+	  rollout status statefulset/tempo --timeout=$(WAIT_TIMEOUT)
 
 # loki
 .PHONY: install-loki-helm-repo
@@ -1182,48 +1156,10 @@ install-loki-helm-repo:
 deploy-loki:
 	@$(MAKE) check-seaweedfs-secret-exists
 	$(MAKE) install-loki-helm-repo
-
-	release="$(LOKI_RELEASE_NAME)"
-	namespace="$(MONITORING_NAMESPACE)"
-	values="$(MAKEFILE_DIR)loki/values.yaml"
-	chart="grafana-community/loki"
-	desired_values=$$(yq -o=json "$$values" | jq -S -c .)
-
-	metadata_json=$$(helm get metadata "$$release" \
-	  --namespace "$$namespace" \
-	  --kube-context $(KUBECTL_CONTEXT) \
-	  -o json 2>/dev/null || true)
-
-	if [ -n "$$metadata_json" ]; then
-		current_version=$$(echo "$$metadata_json" | jq -r '.version // empty')
-		current_values=$$(helm get values "$$release" \
-		  --namespace "$$namespace" \
-		  --kube-context $(KUBECTL_CONTEXT) \
-		  -o json | jq -S -c .)
-
-		if [ "$$current_values" = "$$desired_values" ] && [ "$$current_version" = "$(LOKI_CHART_VERSION)" ]; then
-			echo "Loki release '$$release' already matches $$values (chart $(LOKI_CHART_VERSION)); Skipping.";
-			exit 0;
-		fi
-
-		echo "Upgrading Loki release '$$release'...";
-		helm upgrade "$$release" "$$chart" \
-		  --kube-context $(KUBECTL_CONTEXT) \
-		  --namespace "$$namespace" \
-		  --version $(LOKI_CHART_VERSION) \
-		  --values "$$values" \
-		  --wait \
-		  --timeout $(WAIT_TIMEOUT);
-	else
-		echo "Installing Loki release '$$release'...";
-		helm install "$$release" "$$chart" \
-		  --kube-context $(KUBECTL_CONTEXT) \
-		  --namespace "$$namespace" \
-		  --version $(LOKI_CHART_VERSION) \
-		  --values "$$values" \
-		  --wait \
-		  --timeout $(WAIT_TIMEOUT);
-	fi
+	helm upgrade --install $(LOKI_RELEASE_NAME) grafana-community/loki \
+	  --version $(LOKI_CHART_VERSION) --values $(MAKEFILE_DIR)loki/values.yaml \
+	  --kube-context $(KUBECTL_CONTEXT) --namespace $(MONITORING_NAMESPACE) \
+	  --wait --timeout $(WAIT_TIMEOUT)
 
 # alloy
 .PHONY: install-alloy-helm-repo

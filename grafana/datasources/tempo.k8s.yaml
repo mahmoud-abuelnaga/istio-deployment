@@ -45,7 +45,7 @@ spec:
       # and also what the VictoriaMetrics operator stamps on scraped targets,
       # so both kinds of metric answer to the same selector. namespace comes
       # from the service.namespace dimension configured under
-      # metricsGenerator.processor.span_metrics in Tempo/helm/values.yaml,
+      # config.metrics_generator.processor.span_metrics in tempo/values.yaml,
       # renamed from the generator's `service_namespace` by the
       # write_relabel_configs there; dropping that dimension would break these
       # queries.

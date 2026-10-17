@@ -65,7 +65,7 @@ spec:
         # VictoriaMetrics operator emit.
         #
         # This one cannot also filter on namespace: a derived field
-        # exposes only ${__value.raw}, the single value its matcher
+        # exposes only ${__value.raw}, the single value its matcherw
         # extracted, with no way to reference a second label. Span
         # metric `service` values are unique across namespaces here, so
         # the service-only scope resolves to one series set in practice.

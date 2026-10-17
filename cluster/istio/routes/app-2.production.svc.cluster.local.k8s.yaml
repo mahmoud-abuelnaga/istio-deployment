@@ -1,0 +1,78 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: VirtualService
+metadata:
+  name: app-2.production.svc.cluster.local
+  namespace: production
+spec:
+  hosts:
+  - app-2.production.svc.cluster.local
+  http:
+    - name: redirect-to-version
+      match:
+        - headers:
+            x-version:
+              exact: af57fef9
+
+          uri:
+            exact: /non-existent-path
+
+      redirect:
+        uri: /version
+
+    - name: header-based-route-version-af57fef9
+      match:
+        - headers:
+            x-version:
+              exact: af57fef9
+
+      route:
+        - destination:
+            host: app-2.production.svc.cluster.local
+            subset: af57fef9
+
+      # timeout: 60s
+      # retries:
+      #   attempts: 6
+      #   perTryTimeout: 2s
+      #   retryOn: 5xx
+
+    - name: header-based-route-version-dbc9c9bb
+      match:
+        - headers:
+            x-version:
+              exact: dbc9c9bb
+      route:
+        - destination:
+            host: app-2.production.svc.cluster.local
+            subset: dbc9c9bb
+
+    - name: default-route
+      route:
+        - destination:
+            host: app-2.production.svc.cluster.local
+
+      fault:
+        delay:
+          percentage:
+            value: 100
+          fixedDelay: 10s
+
+      timeout: 20s
+      retries:
+        attempts: 3
+        perTryTimeout: 2s
+        retryOn: 5xx
+
+
+
+    # - name: mirror-route
+    #   route:
+    #     - destination:
+    #         host: app-2.production.svc.cluster.local
+    #         subset: af57fef9
+    #       weight: 100
+
+    #   mirror:
+    #     host: app-1.production.svc.cluster.local
+    #   mirrorPercentage:
+    #     value: 100.0

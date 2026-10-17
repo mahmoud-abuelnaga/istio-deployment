@@ -5,6 +5,11 @@ metadata:
   namespace: database
 spec:
   instances: 1
+  postgresql:
+    parameters:
+      # Grafana's small database does not need PostgreSQL's default 128MB
+      # shared buffer pool. Keep connection capacity and durability unchanged.
+      shared_buffers: "32MB"
   resources:
     requests:
       cpu: 50m

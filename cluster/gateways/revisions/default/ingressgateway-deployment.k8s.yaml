@@ -19,7 +19,6 @@ spec:
         inject.istio.io/templates: gateway
       labels:
         app.kubernetes.io/name: ingressgateway
-        gateway.networking.k8s.io/gateway-name: ingressgateway
         app.kubernetes.io/instance: ingressgateway-default
         app.kubernetes.io/version: default
         sidecar.istio.io/inject: "true"
@@ -31,7 +30,7 @@ spec:
           resources:
             requests:
               cpu: 10m
-              memory: 64Mi
+              memory: 48Mi
             limits:
               cpu: 200m
               memory: 256Mi

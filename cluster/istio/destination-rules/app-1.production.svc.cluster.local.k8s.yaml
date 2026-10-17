@@ -1,0 +1,15 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: app-1.production.svc.cluster.local
+  namespace: production
+spec:
+  host: app-1.production.svc.cluster.local
+  subsets:
+  - name: af57fef9
+    labels:
+      app.kubernetes.io/version: af57fef9
+
+  - name: dbc9c9bb
+    labels:
+      app.kubernetes.io/version: dbc9c9bb

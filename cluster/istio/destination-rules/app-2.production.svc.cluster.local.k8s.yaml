@@ -1,0 +1,32 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: app-2.production.svc.cluster.local
+  namespace: production
+spec:
+  host: app-2.production.svc.cluster.local
+  subsets:
+  - name: af57fef9
+    labels:
+      app.kubernetes.io/version: af57fef9
+
+  - name: dbc9c9bb
+    labels:
+      app.kubernetes.io/version: dbc9c9bb
+
+  # - name: 1e3b1e98
+  #   labels:
+  #     app.kubernetes.io/version: 1e3b1e98
+
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 1000
+      http:
+        http1MaxPendingRequests: 1000
+
+    outlierDetection:
+      consecutive5xxErrors: 1
+      interval: 1s
+      baseEjectionTime: 3m
+      maxEjectionPercent: 100

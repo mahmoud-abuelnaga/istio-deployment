@@ -1,0 +1,18 @@
+apiVerion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: google.com
+spec:
+  hosts:
+    - google.com
+    - www.google.com
+  location: MESH_EXTERNAL
+  resolution: DNS
+  ports:
+    - name: https
+      port: 443
+      protocol: TLS
+    
+    - name: http
+      port: 80
+      protocol: HTTP
