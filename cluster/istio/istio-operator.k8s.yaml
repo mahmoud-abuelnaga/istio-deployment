@@ -13,6 +13,9 @@ spec:
           port: 4317
           service: tempo-distributor.monitoring.svc.cluster.local
 
+    outboundTrafficPolicy:
+      mode: REGISTRY_ONLY
+
     defaultConfig:
       # One Envoy worker is enough for the fractional CPU budgets in Kind.
       # Each additional worker duplicates connection pools and thread-local state.

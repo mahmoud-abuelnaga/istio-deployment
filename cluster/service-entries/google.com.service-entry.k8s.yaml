@@ -1,7 +1,8 @@
-apiVerion: networking.istio.io/v1beta1
+apiVersion: networking.istio.io/v1beta1
 kind: ServiceEntry
 metadata:
   name: google.com
+  namespace: production
 spec:
   hosts:
     - google.com
@@ -10,9 +11,5 @@ spec:
   resolution: DNS
   ports:
     - name: https
-      port: 443
+      number: 443
       protocol: TLS
-    
-    - name: http
-      port: 80
-      protocol: HTTP

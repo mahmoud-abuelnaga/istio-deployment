@@ -13,3 +13,7 @@ spec:
   - name: dbc9c9bb
     labels:
       app.kubernetes.io/version: dbc9c9bb
+
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL

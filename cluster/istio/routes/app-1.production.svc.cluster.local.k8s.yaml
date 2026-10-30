@@ -52,8 +52,8 @@ spec:
             subset: dbc9c9bb
           weight: 30
 
-      fault:
-        abort:
-          percentage:
-            value: 50
-          httpStatus: 500
+      # fault:
+      #   abort:
+      #     percentage:
+      #       value: 50
+      #     httpStatus: 500
