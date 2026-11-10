@@ -13,3 +13,8 @@ spec:
     - name: https
       number: 443
       protocol: TLS
+
+    - name: http
+      number: 80
+      protocol: HTTP
+      targetPort: 443
