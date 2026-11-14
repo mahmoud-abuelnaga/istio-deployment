@@ -1,0 +1,23 @@
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: ingressgateway
+  namespace: istio-gateway
+  labels:
+    app.kubernetes.io/name: ingressgateway
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingressgateway
+  namespaceSelector:
+    matchNames:
+      - istio-gateway
+  podMetricsEndpoints:
+    - port: http-envoy-prom
+      path: /stats/prometheus
+      interval: 20s
+      relabelConfigs:
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_version]
+          targetLabel: version
+          regex: (.+)
+          replacement: $1

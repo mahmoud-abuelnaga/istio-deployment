@@ -51,17 +51,17 @@ spec:
         - destination:
             host: app-2.production.svc.cluster.local
 
-      fault:
-        delay:
-          percentage:
-            value: 100
-          fixedDelay: 10s
+      # fault:
+      #   delay:
+      #     percentage:
+      #       value: 100
+      #     fixedDelay: 10s
 
-      timeout: 20s
-      retries:
-        attempts: 3
-        perTryTimeout: 2s
-        retryOn: 5xx
+      # timeout: 20s
+      # retries:
+      #   attempts: 3
+      #   perTryTimeout: 2s
+      #   retryOn: 5xx
 
 
 

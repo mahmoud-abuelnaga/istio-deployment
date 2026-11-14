@@ -1,11 +1,11 @@
-apiVersion: security.istio.io/v1
-kind: PeerAuthentication
-metadata:
-  name: app-1
-  namespace: production
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: app-1
-  mtls:
-    mode: DISABLE
+# apiVersion: security.istio.io/v1
+# kind: PeerAuthentication
+# metadata:
+#   name: app-1
+#   namespace: production
+# spec:
+#   selector:
+#     matchLabels:
+#       app.kubernetes.io/name: app-1
+#   mtls:
+#     mode: DISABLE

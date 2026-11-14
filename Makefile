@@ -646,6 +646,7 @@ deploy-gateway:
 	@kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/ingressgateway-service.k8s.yaml
 	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/ingressgateway-gateway.k8s.yaml
 	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/revisions/default/ingressgateway-deployment.k8s.yaml
+	kubectl apply -f $(MAKEFILE_DIR)cluster/gateways/ingressgateway-scrape.k8s.yaml
 
 	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/egressgateway-service.k8s.yaml
 	kubectl --context $(KUBECTL_CONTEXT) apply -f $(MAKEFILE_DIR)cluster/gateways/egressgateway-gateway.k8s.yaml
